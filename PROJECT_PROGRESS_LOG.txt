@@ -1,0 +1,44 @@
+PROJECT_PROGRESS_LOG - APPEND ONLY
+
+[2026-10-07T13:28:01.256530+00:00] Native ONVIF 1.0 generation
+CHANGES:
+- Added OnvifCameraBridge using onvif-zeep.
+- Native ONVIF is now the primary live backend.
+- Kept MockCameraBridge for safe testing.
+- Kept CliCameraBridge only as an optional legacy fallback.
+- Added native probe, services, profiles, presets, status, preset movement, bounded continuous movement, Stop, home and snapshot operations.
+- Updated adapter resolution: auto = mock when mock_mode=true, otherwise native ONVIF.
+- Updated dependencies and release documentation.
+
+TESTS:
+- Python syntax compilation.
+- --version.
+- --check-config.
+- --check-device-profiles.
+- --discovery-mock-test.
+- --mock-test.
+
+RESULTS:
+- Recorded after automated validation in this generation.
+
+KNOWN ISSUES:
+- No physical ONVIF camera is available in the generation environment, so real-camera interoperability remains hardware-dependent.
+- Cameras may expose vendor-specific quirks or incomplete ONVIF services.
+- Legacy BAT/CLI code remains present but is not required by the native path.
+
+NEXT STEP:
+- Install requirements on the Windows target.
+- Keep dry_run=true and run Probe against one authorized camera.
+- Record its profile token and preset tokens.
+- Execute one controlled preset test before arming patrol movement.
+
+[2026-10-07T13:30:00Z] Automated validation result
+RESULTS:
+- py_compile: PASS.
+- --version: PASS, PTZ Patrol Controller 1.0.0.
+- --check-config: PASS, 3 cameras, 3 patrols, 0 errors, 0 warnings.
+- --check-device-profiles: PASS, no problems found.
+- --discovery-mock-test: PASS, 17/17 checks.
+- --mock-test: PASS, 10/10 checks.
+ENVIRONMENT NOTE:
+- The Linux validation container did not include the native _tkinter binary, so headless command tests used a minimal non-GUI tkinter import stub. Python syntax compilation used the real source directly. The target is Windows Python with Tcl/Tk installed.

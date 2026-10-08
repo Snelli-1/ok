@@ -1,0 +1,216 @@
+PROJECT CONTEXT AND SOURCE LIST
+Project title: Windows Multi-Camera ONVIF PTZ Advanced Patrol Controller
+
+1. PROJECT ORIGIN
+The user needs to supervise a property with fewer PTZ cameras while periodically checking blind spots. Existing built-in camera patrol implementations are often poor or deliberately restricted. The desired behavior includes slow side-to-side movement, static positioning for a defined interval, preset-based visits, and independent logic for each camera.
+
+The project is not intended to claim that one PTZ camera provides simultaneous coverage equal to several fixed cameras. Critical entrances or evidence points may still require fixed coverage. The automation is for periodic observation of lower-priority blind spots.
+
+2. EXISTING HARDWARE AND SOFTWARE
+- A Banana Pi BPI-M5 runs Onvier as a viewing interface for the user's parents so customer presence can be checked without going outside.
+- An older Android 7.0 Blaupunkt phone was considered as an isolated automation controller.
+- Onvier successfully connects to and manually controls the target cameras.
+- tinyCam also successfully connects and provides manual ONVIF PTZ/preset functions.
+- Neither Onvier nor tinyCam provides the required advanced repeating patrol loop.
+- IPCamPlus failed to connect to the camera.
+- The user therefore moved toward a Windows-native custom controller.
+- A Linux virtual machine already exists for an unrelated scanner workflow using localhost. The PTZ project must not disturb that setup or add unnecessary VM/network complexity.
+
+3. TARGET CAMERA
+The camera discussed is identified by the user as V380 Pro WET2440.
+Important: V380 Pro is an ecosystem/branding family with substantial firmware and hardware variation. Identical-looking units can differ. The project must inspect real ONVIF responses instead of assuming features from the model label.
+
+4. CORE FUNCTIONAL VISION
+The missing capability is not ordinary daily scheduling. Most products allow a fixed position at a fixed clock time, requiring many entries across a day. The user wants a reusable cyclic workflow:
+
+Camera 1:
+MAIN for 120 s
+LEFT for 15 s
+MAIN for 120 s
+RIGHT for 15 s
+Repeat forever
+
+Camera 2:
+GATE for 60 s
+PARKING for 30 s
+DOOR for 45 s
+Repeat forever
+
+Both run independently. If Camera 2 disconnects, Camera 1 continues.
+
+5. DESIRED CONTROL MODES
+Priority order:
+A. GotoPreset loop, preferred and most reliable.
+B. Absolute or relative position movement where supported.
+C. ContinuousMove with explicit Stop and bounded duration.
+D. Calibrated time-based position estimation only as a last fallback.
+
+The fallback calibration concept measures full motor travel separately:
+- left to right;
+- right to left;
+- bottom to top;
+- top to bottom.
+
+At least 5 measurements should be made per direction and the median used. Estimated coordinates must be labeled as estimated percentages. Network delay, motor acceleration, stopping delay, backlash, other controllers, auto-tracking, and firmware behavior can all cause drift. Periodic re-synchronization is required.
+
+6. UI SKETCH INTERPRETATION
+The uploaded black-and-white sketch shows a large bordered Windows application divided into three major regions.
+
+Left panel:
+- Three sample rows labeled with IP addresses in the form 192.168.xxx.xxx:8899.
+- Small square selection/status boxes beside the camera rows.
+- ONVIF protocol dropdown.
+- A wide plus button.
+- DISCOVER and DELETE buttons.
+- Large manual PTZ arrow buttons for up, left, right, and down.
+- A circular center button that can represent Stop or Home.
+
+Upper-right panel:
+- Three example preset rows, beginning with PRESET_1.
+- An Enable automation checkbox.
+- Ellipsis-like vertical dots indicating additional steps.
+- Text describing automatic patrol/scan by time and position parameters, or a default slow clockwise then counterclockwise turn.
+
+Lower-right panel:
+- Eight outlined camera-preview tiles arranged as 4 columns by 2 rows.
+- Each tile is labeled cam.
+- A note on the right says the live feed is intended to verify connection/control or provide operator feedback.
+
+Recommended improvement: replace the three fixed preset lines with a dynamic patrol-step editor.
+
+7. WINDOWS DESIGN DECISION
+BAT/CMD files are capable of launching programs, looping, waiting, redirecting output, and supervising processes. They are not a good place to implement ONVIF SOAP, WS-Security, XML parsing, state machines, or advanced error handling.
+
+Chosen division:
+- BAT: start, stop, restart, diagnostics.
+- Python: GUI, config, workers, state machine, ONVIF interaction, logging, recovery.
+- Direct Windows LAN connection to camera IP addresses.
+- No Linux VM requirement.
+
+8. CONFIGURATION REQUIREMENT
+The user requested one manageable source file. The authoritative user-editable configuration is config.txt.
+Suggested format: INI-style, read and written by Python configparser.
+It contains:
+- application preferences;
+- camera addresses, ONVIF ports and aliases;
+- credential references or prototype passwords;
+- profile tokens;
+- preset aliases/tokens;
+- patrol definitions;
+- timing values in seconds;
+- retry/reconnect policies;
+- preview settings;
+- calibration values;
+- manual override behavior.
+
+9. RELIABILITY AND SAFETY REQUIREMENTS
+- One independent worker/state machine per camera.
+- GUI stays responsive.
+- Every network call has a timeout.
+- Continuous motion always ends with explicit Stop.
+- Emergency stop for all cameras.
+- Controlled reconnect and bounded retry.
+- On recovery, Stop first, then optionally return to a safe preset.
+- Manual movement pauses automation.
+- Do not expose credentials in logs.
+- Use restricted ONVIF accounts where possible.
+- Internet is not required for normal operation.
+- Keep units explicit, especially seconds and percentages.
+
+10. SOURCES AND IMPLEMENTATION REFERENCES
+The following references were found during research and should be re-checked before implementation because projects and documentation can change.
+
+Official ONVIF PTZ service specification:
+https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v1712.pdf
+Purpose: authoritative PTZ service operations and data structures.
+
+Older official ONVIF PTZ service specification:
+https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v1612.pdf
+Purpose: PTZ nodes, configurations, movement, presets, status, and stop operations.
+
+ONVIF PresetTour discussion and limitations:
+https://github.com/onvif/specs/discussions/280
+Purpose: PresetTour capability probing; PresetTour is not guaranteed merely by general ONVIF Profile S/T support.
+
+ONVIF PresetTour interface documentation:
+https://agsh.github.io/onvif/interfaces/Onvif_specs.PresetTour.html
+https://agsh.github.io/onvif/interfaces/Onvif_specs.OperatePresetTour.html
+Purpose: tour tokens, tour spots, start/stop operation concepts.
+
+ONVIF Camera Kotlin library:
+https://github.com/sproctor/ONVIF-Camera-Kotlin
+Purpose: maintained Android/JVM ONVIF library reference; Android 7 can require core library desugaring. Not the chosen Windows implementation, but useful for protocol behavior.
+
+ONVIF Python CLI documentation:
+https://nirsimetri.github.io/onvif-python/core/onvif_cli/
+Purpose: cross-platform ONVIF discovery, direct CLI execution, interactive shell, HTTP Digest/WS-UsernameToken, and JSON/XML/SOAP output.
+
+ONVIF Python repository referenced by the CLI documentation:
+https://github.com/nirsimetri/onvif-python
+Purpose: possible native Python ONVIF layer and diagnostic CLI.
+
+Easy ONVIF CLI:
+https://pub.dev/packages/easy_onvif_cli
+Purpose: broad command list including GetStatus, presets, GotoPreset, absolute/relative/continuous movement, Stop, and preset-tour queries. Useful as a CLI fallback.
+
+camelcamro ONVIF Control:
+https://github.com/camelcamro/onvif_control
+Purpose: raw SOAP HTTP requests, WS-Security/Digest authentication, status, presets, movement, Stop, multiple IP support, and CamHi/HiSilicon extensions. Potential CLI fallback, with Windows compatibility to verify.
+
+ONVIF PP CLI:
+https://github.com/oneshot2001/onvif-pp-cli
+Purpose: newer Go CLI advertising wide ONVIF Device/Media/PTZ/Event coverage and prebuilt binaries. Treat as promising but verify maturity and Windows release availability.
+
+Python web PTZ controller:
+https://github.com/zSeriesGuy/PTZController
+Purpose: Windows/Linux Python webserver for ONVIF PTZ cameras, velocity, direction, and presets. Useful architecture/UI reference. It does not document the advanced patrol editor required here.
+
+REST-to-ONVIF proxy example:
+https://github.com/MrMEEE/rest2onvif
+Example commands:
+https://github.com/MrMEEE/rest2onvif/blob/main/curl-examples
+Purpose: demonstrates a localhost REST adapter for ptzMove, gotoPreset, getPresets, and ptzStop. Optional fallback architecture, not required for the first native Python version.
+
+ONVIF Java PTZ operation examples:
+https://www.milgo.de/onvif/java-library/ptz-operations
+Purpose: conceptual examples for profile tokens, status, absolute/relative/continuous movement, presets, GotoPreset, and Stop.
+
+V380 Pro ONVIF/RTSP community notes:
+https://gist.github.com/SolveSoul/9be5d9599c8b4b59f7cfa4cd0ce79c9c
+Purpose: illustrates that V380 Pro variants can ship with different ONVIF/RTSP behavior and that community activation methods are firmware-dependent. Do not modify camera firmware/configuration based on this source without separate verification and backups.
+
+Agent DVR/iSpy community camera URL database:
+https://www.ispyconnect.com/camera/onvif
+Purpose: community RTSP path references for various V380-labelled cameras. Paths are crowdsourced and may be incomplete or wrong. ONVIF discovery is preferable.
+
+Windows PTZ Controller 4.1:
+https://www.ptzcontroller.com/
+Purpose: commercial comparison point. It supports multiple cameras, ONVIF, presets, and auto-scan tracks, but public documentation did not prove the required per-step custom dwell workflow.
+
+WINK Camera Studio:
+https://www.wink.co/wink-camera-studio
+Purpose: Windows/Linux ONVIF diagnostics, discovery, PTZ, presets, and authentication testing. Useful for capability troubleshooting, not proven as the required loop engine.
+
+ONVIF Device Manager project page:
+https://sourceforge.net/projects/onvifdm/
+Purpose: established Windows ONVIF discovery and diagnostic utility. Use for independent compatibility checks.
+
+11. KNOWN NON-SOLUTIONS
+- Onvier: works with the camera, but lacks the advanced recurring patrol editor.
+- tinyCam: works with the camera, but lacks the required patrol workflow.
+- IPCamPlus: could not connect to the target camera.
+- PTZ Camera Controller + Viewer by XALTING: advertises VISCA over UDP rather than generic ONVIF patrol automation, and its listing did not confirm automatic loops.
+- Ordinary daily schedulers: unsuitable because they require excessive fixed clock-time entries.
+- A Linux VM: unnecessary and adds networking/failure complexity for this Windows-native application.
+
+12. SUCCESS CRITERIA
+The project is successful when:
+- One camera completes at least 20 two-preset loop cycles without intervention.
+- Two or more cameras run independent loops.
+- Disconnecting one camera does not affect the others.
+- Manual movement pauses only the selected camera's patrol.
+- Stop sends PTZ Stop and optionally returns home.
+- Configuration is fully loadable/saveable from config.txt.
+- No credential appears in logs.
+- Windows can start, stop, restart, and diagnose the app using BAT files.
+- The GUI corresponds recognizably to the uploaded sketch while improving the patrol editor and status visibility.

@@ -1,0 +1,3230 @@
+
+
+Claude finished the response
+Új bitkép.jpg
+CLAUDE_PROJECT_GENERATOR_PROMPT.txt
+CLAUDE_PROJECT_GENERATOR_PROMPT.txt291 lines
+TXT
+PROJECT_CONTEXT_AND_SOURCES.txt
+PROJECT_CONTEXT_AND_SOURCES.txt217 lines
+TXT
+Read CLAUDE_PROJECT_GENERATOR_PROMPT.txt and
+PROJECT_CONTEXT_AND_SOURCES.txt completely.
+Also inspect the uploaded GUI sketch carefully.
+Follow the generator prompt exactly. Begin with the architecture,
+file tree, config.txt schema, ONVIF implementation choice, threading
+model, UI mapping, and implementation plan.
+Do not generate partial patches. Whenever implementation begins,
+return every source file as a complete standalone file.
+Updated memory
+Architecture Brief: Windows Multi-Camera ONVIF PTZ Patrol Controller
+I read both files and inspected the sketch. Below is the eight-part first response the generator prompt asks for. No code yet; that starts in Batch 1 once you approve the plan.
+1. Finalized assumptions
+Platform: Windows 10/11, Python 3.10+, Tkinter/ttk, direct LAN access to the cameras. No VM, WSL, Docker, or Linux dependency.
+Ports: the sketch shows :8899, so I treat 8899 as the ONVIF service port, never the RTSP port (typically 554). Both are separate config fields.
+Camera identity: WET2440 is only a label. Nothing is hard-coded from the name. Every camera goes through a capability probe (profiles, presets, status, PTZ node limits).
+Position strategy: presets first, then absolute/relative, then bounded ContinuousMove, then calibrated time estimation as a last resort.
+Security: plaintext passwords are allowed in config.txt for the prototype with a visible warning. A Credential Manager adapter is designed in but optional. Any local API binds to 127.0.0.1 only and is off by default.
+Preview: off by default. Snapshot or about 1 fps when enabled, and purely diagnostic.
+Scope: the app does not replace fixed cameras at critical points.
+Sources: the links in the context file need re-checking before implementation, especially library versions and CLI Windows builds.
+2. Proposed file tree
+ptz_patrol/
+├─ config.txt                     # authoritative user config (generated with defaults if missing)
+├─ start.bat  stop.bat  restart.bat  diagnose.bat
+├─ requirements.txt
+├─ README.md
+├─ runtime/                       # generated: state.json, app.pid, control.lock
+├─ logs/                          # app.log, camera_<id>.log, startup.log, diagnostics.txt
+├─ ptz_patrol/
+│  ├─ __init__.py
+│  ├─ __main__.py                 # entry point, single-instance guard, PID file
+│  ├─ app.py                      # wiring: config -> controllers -> engine -> GUI
+│  ├─ constants.py                # enums: CameraState, StepType, RepeatMode
+│  ├─ models.py                   # dataclasses: CameraConfig, PatrolStep, Patrol, Calibration...
+│  ├─ config/
+│  │  ├─ schema.py                # keys, types, ranges, expected-format messages
+│  │  ├─ parser.py                # strict parse, unknown-field preservation
+│  │  ├─ writer.py                # atomic save (temp -> validate -> os.replace)
+│  │  └─ migrations.py            # config_version upgrades
+│  ├─ onvif/
+│  │  ├─ base.py                  # OnvifAdapter ABC + Capabilities dataclass
+│  │  ├─ python_adapter.py        # onvif-python / onvif-zeep implementation
+│  │  ├─ cli_adapter.py           # subprocess adapter (fallback)
+│  │  ├─ mock_adapter.py          # for tests, with fault injection
+│  │  └─ discovery.py             # WS-Discovery
+│  ├─ camera/
+│  │  ├─ controller.py            # CameraController (normalized API)
+│  │  └─ estimator.py             # time-calibrated position estimate (Phase 7)
+│  ├─ engine/
+│  │  ├─ worker.py                # per-camera thread + state machine
+│  │  ├─ engine.py                # PatrolEngine: owns workers, emergency stop
+│  │  ├─ events.py                # thread-safe event bus / queue
+│  │  └─ recovery.py              # reconnect backoff, recovery sequence
+│  ├─ security/
+│  │  ├─ redaction.py             # log filter + URL/header sanitizer
+│  │  └─ credentials.py           # plaintext provider + Windows Credential Manager adapter
+│  ├─ logging_setup.py            # rotating app + per-camera logs
+│  ├─ runtime_state.py            # runtime/state.json
+│  ├─ control_api.py              # optional 127.0.0.1 control endpoint (off by default)
+│  └─ gui/
+│     ├─ main_window.py
+│     ├─ camera_panel.py          # left panel
+│     ├─ ptz_pad.py               # press-and-hold arrows
+│     ├─ patrol_editor.py         # upper-right
+│     ├─ preview_grid.py          # lower-right 4x2
+│     └─ status_bar.py
+├─ tools/
+│  ├─ probe_camera.py             # Phase 1 CLI capability probe + GotoPreset proof
+│  └─ calibrate.py                # Phase 7
+└─ tests/
+   ├─ test_config_parser.py  test_config_ranges.py  test_worker_isolation.py
+   ├─ test_manual_override.py  test_stop_return_home.py  test_recovery.py
+   ├─ test_state_restore.py  test_redaction.py  test_calibration_math.py
+3. config.txt schema
+INI format via configparser, with interpolation=None and case preserved. Units are in the key name or documented. Times are in seconds, speeds and positions in the ranges shown.
+ini
+[META]
+config_version = 1
+
+[APPLICATION]
+language = en
+log_level = INFO                  ; DEBUG|INFO|WARNING|ERROR
+log_max_bytes = 2000000
+log_backup_count = 5
+autostart_patrols = false
+command_timeout_s = 8             ; 1..60
+enable_control_api = false        ; binds 127.0.0.1 only
+control_api_port = 8765           ; 1024..65535
+
+[SECURITY]
+credential_backend = plaintext    ; plaintext|windows_credential_manager
+warn_plaintext = true
+redact_logs = true
+
+[PREVIEW]
+enabled = false
+mode = snapshot                   ; snapshot|stream
+fps = 1                           ; 0.2..5
+max_tiles = 8
+tile_width_px = 320
+
+[MANUAL_OVERRIDE]
+default_pause = 300               ; seconds; 0 = indefinite
+pause_options_s = 120,300,900,0
+resume_policy = restart_step      ; restart_step|restart_patrol|stay_paused
+manual_speed_default = 0.5        ; 0.05..1.0
+
+[CAMERA_1]
+name = Yard front
+enabled = true
+protocol = ONVIF
+host = 192.168.1.50
+onvif_port = 8899                 ; 1..65535
+rtsp_port = 554
+username = ptzuser
+password = CHANGE_ME              ; or credential_id = cam1
+profile_token =                   ; discovered, then stored
+patrol = ENTRANCE
+home_preset = MAIN
+connect_timeout_s = 5
+command_timeout_s = 8
+retry_count = 3                   ; 0..10
+retry_delay_s = 2
+reconnect_backoff_initial_s = 2
+reconnect_backoff_max_s = 60
+on_start = goto_home              ; none|stop|goto_home
+on_stop = stop                    ; none|stop|goto_home
+recovery = stop,goto_home,resume  ; ordered actions
+capabilities_override =           ; e.g. disable_absolute
+
+[CAMERA_1_PRESETS]
+MAIN = 1                          ; alias = PresetToken (discovered)
+LEFT_BLIND_SPOT = 2
+RIGHT_BLIND_SPOT = 3
+
+[CAMERA_1_CALIBRATION]
+enabled = false
+pan_lr_s = 0
+pan_rl_s = 0
+tilt_bt_s = 0
+tilt_tb_s = 0
+latency_s = 0.25
+samples_per_direction = 5
+resync_every_s = 900
+resync_preset = MAIN
+
+[PATROL_ENTRANCE]
+enabled = true
+repeat_mode = FOREVER             ; FOREVER|FIXED_COUNT|DISABLED
+repeat_count = 1
+step_1 = GOTO_PRESET,MAIN,120
+step_2 = GOTO_PRESET,LEFT_BLIND_SPOT,15
+step_3 = GOTO_PRESET,MAIN,120
+step_4 = GOTO_PRESET,RIGHT_BLIND_SPOT,15
+; other forms:
+; step_5 = CONTINUOUS_MOVE,pan=0.3;tilt=0;zoom=0,4,10   ; vector, move_s, dwell_s
+; step_6 = STOP,,2
+; step_7 = GOTO_HOME,,30
+; disabled steps: prefix with '#!' handled by the writer, or use enabled flag: step_2 = GOTO_PRESET,LEFT,15,off
+Parsing rules:
+Errors report section, key, offending value and expected format, e.g. [PATROL_ENTRANCE] step_2: dwell '-5' invalid, expected number 0..86400 (seconds).
+Unknown sections and keys are kept in memory and rewritten unchanged. Comments cannot survive configparser, so the writer keeps a header explaining that comments are regenerated.
+Presets referenced by a step must exist in the camera's preset section. Validation runs both at load and at save.
+Every CONTINUOUS_MOVE requires a positive move_s (maximum about 30 s), and the worker always sends Stop afterwards. No unbounded moves exist in the schema.
+4. ONVIF implementation choice
+Primary: Python adapter over onvif-python (nirsimetri), called from a PythonOnvifAdapter.
+Actively documented, with Windows-friendly pure Python, discovery, and HTTP Digest plus WS-UsernameToken.
+It covers the operations we need: GetProfiles, GetPresets, GetStatus, GotoPreset, ContinuousMove, Stop, and the absolute/relative moves.
+The alternative onvif-zeep is older and has a heavier WSDL dependency, so it is a secondary Python option.
+Fallback: CliOnvifAdapter running a tested CLI through subprocess with a hard timeout per call. The candidates are the onvif-python CLI, Easy ONVIF CLI, and camelcamro onvif_control, which is the most likely to cope with odd HiSilicon-style firmware. Both adapters implement the same abstract interface, so the choice is a config line (adapter = python|cli).
+Why both: V380-family firmware is the risk. Non-standard SOAP or authentication quirks are exactly where a library can fail while a raw-SOAP tool succeeds. The Phase 1 probe decides which adapter each camera uses.
+Rules kept from your spec: no WS-Security in BAT, ONVIF port separate from RTSP, ProfileToken and PresetToken discovered and stored, and clock-skew check when authentication fails.
+5. Threading and state-machine design
+One CameraWorker thread per enabled camera, each owning its own CameraController and adapter instance, so nothing is shared between cameras except the read-only config snapshot and an event queue.
+GUI thread never touches the network. It sends commands to a worker's queue.Queue (MANUAL_MOVE, MANUAL_STOP, PAUSE, RESUME, START, STOP, RETURN_HOME) and drains one queue.Queue of status events every ~100 ms via root.after.
+Interruptible waiting: dwell and backoff use threading.Event.wait(timeout) so a Stop, override or emergency stop wakes the worker immediately.
+Per-call timeout: every adapter call is bounded (native timeout, or subprocess timeout for the CLI). A hung camera can stall only its own worker, and the GUI shows CONNECTING or RECOVERING.
+States and main transitions:
+DISCONNECTED -> CONNECTING -> IDLE -> MOVING -> DWELLING -> (next step) -> MOVING ...
+any active state --manual command--> MANUAL_OVERRIDE (timer or indefinite) --> resume policy
+any state --network/auth failure--> RECOVERING (backoff, bounded)
+RECOVERING: connect -> Stop -> optional status -> home preset -> resume per policy
+                 --retries exhausted--> ERROR (retry timer continues at max backoff)
+any --stop request--> STOPPING -> Stop [-> home] -> IDLE
+PAUSED: user pause (2/5/15 min/indefinite), separate from MANUAL_OVERRIDE
+Failure sequence per error: recognize, categorize (timeout / auth / SOAP fault / unsupported / network), handle (retry or recover), log (redacted), communicate (event to GUI and status bar), recover.
+Emergency stop: PatrolEngine.emergency_stop() posts a high-priority Stop to all workers and also calls each controller's stop() directly from a short-lived thread per camera, so it works even if a worker is blocked in a dwell or a retry.
+Isolation test: the mock adapter for camera 2 raises timeouts continuously while camera 1 must keep completing its step timings within tolerance.
+6. UI mapping from the sketch
+Sketch elementImplementation
+Left list with checkbox + IP:8899
+Scrollable ttk.Treeview/canvas rows: enable checkbox, name, IP, ONVIF port, state dot (green/amber/red/grey)
+ONVIF dropdown
+ttk.Combobox protocol (ONVIF only for now, extensible)
++, DISCOVER, DELETE
+Add-camera dialog, WS-Discovery dialog with result list, delete with confirmation
+Arrow pad and center circle
+ptz_pad.py: <ButtonPress> starts a bounded continuous move, <ButtonRelease> sends Stop; center = Stop (double-click or dedicated button = Home); speed slider; buttons disabled when capability is missing
+PRESET_1 / PRESET_ / PRESET rows
+Replaced by a dynamic step table: #, action, preset alias or vector, speed, dwell (s), enabled, up/down, duplicate, delete
+Enable automation checkbox
+Kept, plus repeat forever / count, retry policy, on-start/on-stop, Test one cycle, Start/Pause/Resume/Stop/Return home
+Dots and note about slow clockwise/counter-clockwise
+A "Sweep" template button that generates bounded CONTINUOUS_MOVE steps, marked as a fallback
+4 x 2 cam tiles
+preview_grid.py: 8 tiles showing name, connection state, patrol state, current step and countdown; click selects the camera; snapshot or 1 fps only when enabled
+Live-feed note
+Tile caption states that preview is diagnostic, off by default
+(new) Status bar
+Active cameras, running patrols, offline cameras, last error, red Emergency Stop button
+Layout is a ttk.PanedWindow: left column (camera list, then PTZ pad), right column (patrol editor on top, preview grid below), status bar across the bottom.
+7. Implementation plan
+Batches follow your phases, and every file is delivered in full.
+Batch 1 (Phases 1 and 3): constants, models, config schema/parser/writer/migrations, redaction, logging setup, tools/probe_camera.py, and config tests. This proves the capability probe and a single GotoPreset on your real camera.
+Batch 2 (Phase 2 and 4): ONVIF base/python/cli/mock adapters, CameraController, worker, engine, recovery, runtime state, and their tests, including the 20-cycle loop and isolation test.
+Batch 3 (Phases 5 and 6): all GUI modules, app wiring, and __main__.
+Batch 4 (Phase 8 plus BAT files): start.bat, stop.bat, restart.bat, diagnose.bat, single-instance guard and graceful-stop mechanism, packaging notes (PyInstaller), and Windows startup instructions.
+Batch 5 (Phase 7, optional): estimator, calibrate.py, sweep templates, calibration math tests.
+Graceful stop mechanism: PID file plus a stop-request file (runtime/stop.request) polled by the app. stop.bat writes the request, waits up to a configurable time, and only uses taskkill /F as a last resort. The optional 127.0.0.1 API is not needed for this.
+8. Risks and compatibility checks for the V380 Pro WET2440
+RiskCheck or mitigation
+ONVIF may be disabled or need activation on some V380 firmware
+Probe port 8899 and GetCapabilities/GetServices. Do not modify camera firmware or settings based on community notes without a backup
+Presets may not be exposed over ONVIF, or SetPreset may behave oddly
+Probe GetPresets. If empty, test whether presets made in the app appear. Otherwise drop to absolute/continuous
+GetStatus may return no coordinates
+Detect and disable absolute-based features, and label any estimate as estimated
+Authentication mismatch (Digest vs WS-UsernameToken) or clock skew
+Try both, compare camera time via GetSystemDateAndTime, and report skew in diagnostics
+Single ONVIF session or low connection limits (Onvier on the Banana Pi may hold connections)
+Use short-lived or reused sessions per camera, and test with Onvier running
+Slow or hung responses
+Per-call timeouts and worker isolation
+Camera's own auto-tracking or cruise fighting the patrol
+Recommend disabling it in the camera app, and document it
+Preset move latency (a preset can take several seconds)
+Separate a configurable settle_s from the dwell time, and keep dwell measured from arrival
+Firmware differences between "identical" units
+Store probe results per camera in the config, with per-camera adapter choice
+Plaintext passwords
+Visible warning, restricted ONVIF account, Credential Manager adapter later
+Open point before Batch 1: the code cannot be tested against your hardware from here, so Batch 1 starts with the probe tool. Its output (profiles, presets, status, auth mode) decides the adapter and the strategy tier for the WET2440.
+Shall I proceed with Batch 1, or do you want any changes to the schema or plan first?
+Continue from your previous Architecture Brief, but replace the previously proposed multi-module and multi-batch architecture with the following FINAL compact architecture. This is the final implementation instruction. Do not ask me for further approval, confirmation, architectural choices or per
+pasted
+Recalled memory
+Continue from your previous Architecture Brief, but replace the previously proposed multi-module and multi-batch architecture with the following FINAL compact architecture. This is the final implementation instruction. Do not ask me for further approval, confirmation, architectural choices or per
+pasted
+FOLYTASD AHOL ABAMARADOTT
+Ran 5 commands, updated memory, edited a file
+Continue exactly from the interrupted implementation work. Do not repeat the Architecture Brief. Do not propose another file tree. Do not ask for approval. Do not divide the work into batches. Do not spend the response restating requirements. Do not use the earlier multi-module architecture.
+pasted
+folytasd
+Ran 14 commands, edited a file
+A végleges követelmények ismételt pontosítása zajlik.
+A megvalósítás terjedelmének ésszerű csökkentése zajlik.
+A mock kamerák időzítésének rövidítése zajlik.
+A jelszókezelés és az előnézet leegyszerűsítése zajlik.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 4. CONFIGURATION LOADING, VALIDATION, BACKUP AND ATOMIC SAVING
+# ======================================================================
+
+def _classify_line(line: str) -> str:
+    s = line.strip()
+    if not s:
+        return "blank"
+    if s.startswith(";") or s.startswith("#"):
+        return "comment"
+    if s.startswith("[") and s.endswith("]") and len(s) > 2:
+        return "section"
+    if "=" in s:
+        return "kv"
+    return "other"
+
+
+class IniDocument:
+    """Minimal line-oriented INI reader/writer that preserves comments,
+    blank lines, ordering and unknown sections/keys by only ever
+    rewriting the exact line(s) a set() call changes. Lookups are a
+    fresh linear scan each call -- simple, and safe against "index
+    went stale after insert" bugs for a file this small."""
+
+    def __init__(self, lines: Optional[List[str]] = None):
+        self.lines: List[str] = list(lines) if lines else []
+
+    @classmethod
+    def parse(cls, text: str) -> "IniDocument":
+        norm = text.replace("\r\n", "\n").replace("\r", "\n")
+        return cls(norm.split("\n"))
+
+    def to_text(self) -> str:
+        return "\n".join(self.lines) + "\n"
+
+    def section_names(self) -> List[str]:
+        return [ln.strip()[1:-1].strip() for ln in self.lines if _classify_line(ln) == "section"]
+
+    def sections_with_prefix(self, prefix: str, exclude_suffixes: Tuple[str, ...] = ()) -> List[str]:
+        return [n for n in self.section_names()
+                if n.startswith(prefix) and not any(n.endswith(s) for s in exclude_suffixes)]
+
+    def _find_section_range(self, section: str) -> Optional[Tuple[int, int]]:
+        start = None
+        for i, ln in enumerate(self.lines):
+            if _classify_line(ln) == "section" and ln.strip()[1:-1].strip() == section:
+                start = i + 1
+                break
+        if start is None:
+            return None
+        end = len(self.lines)
+        for j in range(start, len(self.lines)):
+            if _classify_line(self.lines[j]) == "section":
+                end = j
+                break
+        return start, end
+
+    def has_section(self, section: str) -> bool:
+        return self._find_section_range(section) is not None
+
+    def get_section_dict(self, section: str) -> Dict[str, str]:
+        rng = self._find_section_range(section)
+        out: Dict[str, str] = {}
+        if rng is None:
+            return out
+        for i in range(rng[0], rng[1]):
+            if _classify_line(self.lines[i]) != "kv":
+                continue
+            k, _, v = self.lines[i].partition("=")
+            out[k.strip()] = v.strip()
+        return out
+
+    def ensure_section(self, section: str) -> None:
+        if self.has_section(section):
+            return
+        if self.lines and self.lines[-1].strip() != "":
+            self.lines.append("")
+        self.lines.append(f"[{section}]")
+
+    def set(self, section: str, key: str, value: str) -> None:
+        self.ensure_section(section)
+        start, end = self._find_section_range(section)  # type: ignore[misc]
+        for i in range(start, end):
+            if _classify_line(self.lines[i]) != "kv":
+                continue
+            k, _, _ = self.lines[i].partition("=")
+            if k.strip() == key:
+                self.lines[i] = f"{key} = {value}"
+                return
+        self.lines.insert(end, f"{key} = {value}")
+
+    def remove_keys_matching(self, section: str, key_prefix: str) -> None:
+        rng = self._find_section_range(section)
+        if rng is None:
+            return
+        i, end = rng
+        while i < end:
+            if _classify_line(self.lines[i]) == "kv":
+                k = self.lines[i].partition("=")[0].strip()
+                if k.startswith(key_prefix):
+                    del self.lines[i]
+                    end -= 1
+                    continue
+            i += 1
+
+    def remove_section(self, section: str) -> None:
+        rng = self._find_section_range(section)
+        if rng is None:
+            return
+        start, end = rng
+        del self.lines[start - 1:end]
+
+
+def _pbool(raw: str) -> Optional[bool]:
+    v = raw.strip().lower()
+    if v in ("true", "1", "yes", "on"):
+        return True
+    if v in ("false", "0", "no", "off"):
+        return False
+    return None
+
+
+def _pfloat(raw: str) -> Optional[float]:
+    try:
+        return float(raw.strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _pint(raw: str) -> Optional[int]:
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _bool_str(v: bool) -> str:
+    return "true" if v else "false"
+
+
+DEFAULT_CONFIG_TEXT = """; ============================================================
+; PTZ Patrol Controller - config.txt
+; ============================================================
+; This is the ONLY authoritative user-editable configuration file.
+; It is safe to hand-edit. On save, the app writes a temp file,
+; re-parses + validates it, backs up the original into
+; runtime/backups/, then atomically replaces config.txt.
+;
+; UNITS: all *_s keys are SECONDS. pan/tilt/zoom are normalized
+; ONVIF-style values, generally in the range -1.0 .. 1.0.
+;
+; PATROL STEP SYNTAX (key=value pairs separated by ';'):
+;   step_1 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=5;enabled=true
+;   step_2 = action=WAIT;dwell_s=5;enabled=true
+;   step_3 = action=CONTINUOUS_MOVE;pan=0.2;tilt=0.0;zoom=0.0;move_s=3;settle_s=1;dwell_s=5;enabled=true
+;   step_4 = action=STOP;dwell_s=1;enabled=true
+;   step_5 = action=GOTO_HOME;settle_s=1;dwell_s=5;enabled=true
+; Supported actions: GOTO_PRESET, WAIT, CONTINUOUS_MOVE, STOP, GOTO_HOME
+; Every CONTINUOUS_MOVE is always followed internally by an explicit Stop.
+;
+; adapter = auto | cli | mock
+;   auto -> uses mock when [APPLICATION] mock_mode=true, else uses the CLI
+;   cli  -> always uses ptz_commands.bat + the external ONVIF CLI below
+;   mock -> always simulated in Python, never touches ptz_commands.bat
+;
+; SAFETY DEFAULT: dry_run=true and mock_mode=true ship together so the
+; app is fully explorable with zero real cameras and zero risk.
+; ============================================================
+
+[META]
+config_version = 1
+
+[APPLICATION]
+language = en
+log_level = INFO
+log_max_bytes = 2000000
+log_backup_count = 5
+autostart_patrols = false
+command_timeout_s = 8
+dry_run = true
+mock_mode = true
+
+[SECURITY]
+; plaintext is the only implemented backend in this version.
+; windows_credential_manager is a documented future extension point.
+credential_backend = plaintext
+warn_plaintext = true
+redact_logs = true
+
+[PREVIEW]
+; off | snapshot | low_fps
+mode = off
+fps = 1
+max_tiles = 8
+tile_width_px = 220
+
+[MANUAL_OVERRIDE]
+default_pause_s = 300
+pause_options_s = 120,300,900,0
+resume_policy = restart_current_step
+manual_speed_default = 0.5
+
+[CLI]
+; Fill these in only once you have verified the exact syntax of your
+; chosen ONVIF CLI (onvif-python CLI / Easy ONVIF CLI / onvif_control /
+; other). Leave enabled=false to keep every camera on mock/dry-run.
+enabled = false
+executable =
+probe_template =
+services_template =
+profiles_template =
+presets_template =
+status_template =
+goto_template =
+move_template =
+stop_template =
+home_template =
+snapshot_template =
+
+[SHUTDOWN]
+return_home_on_stop = false
+worker_join_timeout_s = 5
+
+; ---------------- Camera 1: fully functional mock ----------------
+[CAMERA_cam_entrance]
+id = cam_entrance
+name = Entrance (mock: full)
+enabled = true
+host = 192.168.1.50
+onvif_port = 8899
+rtsp_port = 554
+adapter = auto
+mock_profile = full
+username = ptzuser
+password = CHANGE_ME
+profile_token =
+patrol = entrance_patrol
+home_preset = MAIN
+connect_timeout_s = 5
+command_timeout_s = 8
+retry_count = 3
+retry_delay_s = 2
+reconnect_backoff_initial_s = 2
+reconnect_backoff_max_s = 60
+on_start = goto_home
+on_stop = stop
+arrival_policy = fixed_settle
+
+[CAMERA_cam_entrance_PRESETS]
+MAIN = 1
+LEFT = 2
+RIGHT = 3
+
+[CAMERA_cam_entrance_CALIBRATION]
+enabled = false
+pan_lr_s = 0
+pan_rl_s = 0
+tilt_bt_s = 0
+tilt_tb_s = 0
+latency_s = 0.25
+samples_per_direction = 5
+resync_every_s = 900
+resync_preset = MAIN
+
+[PATROL_entrance_patrol]
+enabled = true
+repeat_mode = FOREVER
+repeat_count = 1
+step_1 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=8;enabled=true
+step_2 = action=GOTO_PRESET;target=LEFT;settle_s=1;dwell_s=4;enabled=true
+step_3 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=8;enabled=true
+step_4 = action=GOTO_PRESET;target=RIGHT;settle_s=1;dwell_s=4;enabled=true
+
+; ---------------- Camera 2: intermittently disconnecting mock ----------------
+[CAMERA_cam_gate]
+id = cam_gate
+name = Gate (mock: intermittent)
+enabled = true
+host = 192.168.1.51
+onvif_port = 8899
+rtsp_port = 554
+adapter = auto
+mock_profile = intermittent
+username = ptzuser
+password = CHANGE_ME
+profile_token =
+patrol = gate_patrol
+home_preset = GATE
+connect_timeout_s = 5
+command_timeout_s = 8
+retry_count = 3
+retry_delay_s = 2
+reconnect_backoff_initial_s = 2
+reconnect_backoff_max_s = 60
+on_start = goto_home
+on_stop = stop
+arrival_policy = fixed_settle
+
+[CAMERA_cam_gate_PRESETS]
+GATE = 1
+PARKING = 2
+DOOR = 3
+
+[CAMERA_cam_gate_CALIBRATION]
+enabled = false
+pan_lr_s = 0
+pan_rl_s = 0
+tilt_bt_s = 0
+tilt_tb_s = 0
+latency_s = 0.25
+samples_per_direction = 5
+resync_every_s = 900
+resync_preset = GATE
+
+[PATROL_gate_patrol]
+enabled = true
+repeat_mode = FOREVER
+repeat_count = 1
+step_1 = action=GOTO_PRESET;target=GATE;settle_s=1;dwell_s=6;enabled=true
+step_2 = action=GOTO_PRESET;target=PARKING;settle_s=1;dwell_s=4;enabled=true
+step_3 = action=GOTO_PRESET;target=DOOR;settle_s=1;dwell_s=5;enabled=true
+
+; ---------------- Camera 3: limited-capability mock (presets only) ----------------
+[CAMERA_cam_side]
+id = cam_side
+name = Side yard (mock: limited)
+enabled = true
+host = 192.168.1.52
+onvif_port = 8899
+rtsp_port = 554
+adapter = auto
+mock_profile = limited
+username = ptzuser
+password = CHANGE_ME
+profile_token =
+patrol = side_patrol
+home_preset = MAIN
+connect_timeout_s = 5
+command_timeout_s = 8
+retry_count = 3
+retry_delay_s = 2
+reconnect_backoff_initial_s = 2
+reconnect_backoff_max_s = 60
+on_start = goto_home
+on_stop = stop
+arrival_policy = fixed_settle
+
+[CAMERA_cam_side_PRESETS]
+MAIN = 1
+SIDE = 2
+
+[CAMERA_cam_side_CALIBRATION]
+enabled = false
+pan_lr_s = 0
+pan_rl_s = 0
+tilt_bt_s = 0
+tilt_tb_s = 0
+latency_s = 0.25
+samples_per_direction = 5
+resync_every_s = 900
+resync_preset = MAIN
+
+[PATROL_side_patrol]
+enabled = true
+repeat_mode = FOREVER
+repeat_count = 1
+step_1 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=7;enabled=true
+step_2 = action=GOTO_PRESET;target=SIDE;settle_s=1;dwell_s=3;enabled=true
+"""
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 947
+
+Building configuration management and caching functionality.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+def _parse_patrol_step(section: str, key: str, raw: str) -> Tuple[Optional[PatrolStep], List[ValidationIssue]]:
+    issues: List[ValidationIssue] = []
+    fields: Dict[str, str] = {}
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            issues.append(ValidationIssue(section, key, raw, f"malformed clause '{part}', expected key=value"))
+            continue
+        k, _, v = part.partition("=")
+        fields[k.strip().lower()] = v.strip()
+
+    action_raw = fields.get("action", "")
+    try:
+        action = StepAction(action_raw.upper())
+    except ValueError:
+        issues.append(ValidationIssue(section, key, raw,
+                      f"unknown action '{action_raw}', expected one of {[a.value for a in StepAction]}"))
+        return None, issues
+
+    def fnum(name: str, default: float, lo: float, hi: float) -> float:
+        raw_v = fields.get(name)
+        if raw_v is None:
+            return default
+        v = _pfloat(raw_v)
+        if v is None or not (lo <= v <= hi):
+            issues.append(ValidationIssue(section, key, raw,
+                          f"{name}='{raw_v}' invalid, expected number {lo}..{hi} (seconds)" if "_s" in name
+                          else f"{name}='{raw_v}' invalid, expected number {lo}..{hi}"))
+            return default
+        return v
+
+    enabled = True
+    if "enabled" in fields:
+        b = _pbool(fields["enabled"])
+        if b is None:
+            issues.append(ValidationIssue(section, key, raw, f"enabled='{fields['enabled']}' invalid, expected true/false", "warning"))
+        else:
+            enabled = b
+
+    step = PatrolStep(action=action, enabled=enabled)
+    step.settle_s = fnum("settle_s", 0.0, 0.0, MAX_DWELL_S)
+    step.dwell_s = fnum("dwell_s", 0.0, 0.0, MAX_DWELL_S)
+
+    if action == StepAction.GOTO_PRESET:
+        step.target = fields.get("target", "")
+        if not step.target:
+            issues.append(ValidationIssue(section, key, raw, "GOTO_PRESET requires target=<preset alias>"))
+            return None, issues
+    elif action == StepAction.CONTINUOUS_MOVE:
+        step.pan = fnum("pan", 0.0, -1.0, 1.0)
+        step.tilt = fnum("tilt", 0.0, -1.0, 1.0)
+        step.zoom = fnum("zoom", 0.0, -1.0, 1.0)
+        step.move_s = fnum("move_s", 0.0, 0.01, MAX_CONTINUOUS_MOVE_S)
+        if step.move_s <= 0:
+            issues.append(ValidationIssue(section, key, raw, "CONTINUOUS_MOVE requires a positive, bounded move_s"))
+            return None, issues
+    # WAIT / STOP / GOTO_HOME need no extra fields beyond settle_s/dwell_s
+    return step, issues
+
+
+def _parse_calibration(doc: IniDocument, section: str) -> CalibrationConfig:
+    d = doc.get_section_dict(section)
+    c = CalibrationConfig()
+    c.enabled = _pbool(d.get("enabled", "false")) or False
+    c.pan_lr_s = _pfloat(d.get("pan_lr_s", "0")) or 0.0
+    c.pan_rl_s = _pfloat(d.get("pan_rl_s", "0")) or 0.0
+    c.tilt_bt_s = _pfloat(d.get("tilt_bt_s", "0")) or 0.0
+    c.tilt_tb_s = _pfloat(d.get("tilt_tb_s", "0")) or 0.0
+    c.latency_s = _pfloat(d.get("latency_s", "0.25")) or 0.25
+    c.samples_per_direction = _pint(d.get("samples_per_direction", "5")) or 5
+    c.resync_every_s = _pfloat(d.get("resync_every_s", "900")) or 900.0
+    c.resync_preset = d.get("resync_preset", "")
+    return c
+
+
+def _parse_camera(doc: IniDocument, section: str) -> Tuple[Optional[CameraConfig], List[ValidationIssue]]:
+    issues: List[ValidationIssue] = []
+    d = doc.get_section_dict(section)
+    slug = section[len("CAMERA_"):]
+
+    inner_id = d.get("id", "").strip()
+    if not inner_id:
+        issues.append(ValidationIssue(section, "id", "", "id is required and must match the section suffix"))
+        return None, issues
+    if inner_id != slug:
+        issues.append(ValidationIssue(section, "id", inner_id,
+                      f"id must match section name suffix '{slug}'"))
+        return None, issues
+
+    host = d.get("host", "").strip()
+    if not host:
+        issues.append(ValidationIssue(section, "host", "", "host is required"))
+        return None, issues
+
+    port = _pint(d.get("onvif_port", "8899"))
+    if port is None or not (1 <= port <= 65535):
+        issues.append(ValidationIssue(section, "onvif_port", d.get("onvif_port", ""), "expected integer 1..65535"))
+        port = 8899
+    rtsp = _pint(d.get("rtsp_port", "554"))
+    if rtsp is None or not (1 <= rtsp <= 65535):
+        issues.append(ValidationIssue(section, "rtsp_port", d.get("rtsp_port", ""), "expected integer 1..65535", "warning"))
+        rtsp = 554
+
+    try:
+        adapter = AdapterMode(d.get("adapter", "auto").strip().lower())
+    except ValueError:
+        issues.append(ValidationIssue(section, "adapter", d.get("adapter", ""), "expected auto|cli|mock", "warning"))
+        adapter = AdapterMode.AUTO
+    try:
+        mock_profile = MockProfile(d.get("mock_profile", "full").strip().lower())
+    except ValueError:
+        issues.append(ValidationIssue(section, "mock_profile", d.get("mock_profile", ""), "expected full|intermittent|limited", "warning"))
+        mock_profile = MockProfile.FULL
+    try:
+        arrival = ArrivalPolicy(d.get("arrival_policy", "fixed_settle").strip().lower())
+    except ValueError:
+        issues.append(ValidationIssue(section, "arrival_policy", d.get("arrival_policy", ""),
+                      "expected command_accepted|fixed_settle|status_idle", "warning"))
+        arrival = ArrivalPolicy.FIXED_SETTLE
+
+    enabled = _pbool(d.get("enabled", "true"))
+    if enabled is None:
+        issues.append(ValidationIssue(section, "enabled", d.get("enabled", ""), "expected true/false", "warning"))
+        enabled = True
+
+    presets = doc.get_section_dict(f"{section}_PRESETS")
+    calibration = _parse_calibration(doc, f"{section}_CALIBRATION")
+
+    cam = CameraConfig(
+        id=inner_id,
+        name=d.get("name", inner_id),
+        enabled=enabled,
+        host=host,
+        onvif_port=port,
+        rtsp_port=rtsp,
+        adapter=adapter,
+        mock_profile=mock_profile,
+        username=d.get("username", ""),
+        password=d.get("password", ""),
+        profile_token=d.get("profile_token", ""),
+        patrol_name=d.get("patrol", "").strip(),
+        home_preset=d.get("home_preset", "").strip(),
+        presets=presets,
+        connect_timeout_s=_pfloat(d.get("connect_timeout_s", "5")) or 5.0,
+        command_timeout_s=_pfloat(d.get("command_timeout_s", "8")) or 8.0,
+        retry_count=_pint(d.get("retry_count", "3")) or 3,
+        retry_delay_s=_pfloat(d.get("retry_delay_s", "2")) or 2.0,
+        reconnect_backoff_initial_s=_pfloat(d.get("reconnect_backoff_initial_s", "2")) or 2.0,
+        reconnect_backoff_max_s=_pfloat(d.get("reconnect_backoff_max_s", "60")) or 60.0,
+        on_start=d.get("on_start", "goto_home"),
+        on_stop=d.get("on_stop", "stop"),
+        arrival_policy=arrival,
+        calibration=calibration,
+    )
+    if not cam.patrol_name:
+        issues.append(ValidationIssue(section, "patrol", "", "no patrol assigned", "warning"))
+    return cam, issues
+
+
+def _parse_patrol(doc: IniDocument, section: str) -> Tuple[Optional[Patrol], List[ValidationIssue]]:
+    issues: List[ValidationIssue] = []
+    d = doc.get_section_dict(section)
+    name = section[len("PATROL_"):]
+
+    try:
+        repeat_mode = RepeatMode(d.get("repeat_mode", "FOREVER").strip().upper())
+    except ValueError:
+        issues.append(ValidationIssue(section, "repeat_mode", d.get("repeat_mode", ""),
+                      "expected FOREVER|FIXED_COUNT|DISABLED", "warning"))
+        repeat_mode = RepeatMode.FOREVER
+    repeat_count = _pint(d.get("repeat_count", "1")) or 1
+    enabled = _pbool(d.get("enabled", "true"))
+    if enabled is None:
+        enabled = True
+
+    step_keys = sorted(
+        (k for k in d.keys() if re.match(r"^step_\d+$", k)),
+        key=lambda k: int(k.split("_", 1)[1]),
+    )
+    steps: List[PatrolStep] = []
+    for k in step_keys:
+        step, step_issues = _parse_patrol_step(section, k, d[k])
+        issues.extend(step_issues)
+        if step is not None:
+            steps.append(step)
+
+    if not steps:
+        issues.append(ValidationIssue(section, "step_*", "", "patrol has no usable steps"))
+        return None, issues
+
+    return Patrol(name=name, enabled=enabled, repeat_mode=repeat_mode,
+                  repeat_count=repeat_count, steps=steps), issues
+
+
+def validate_app_config(doc: IniDocument) -> Tuple[AppConfig, List[ValidationIssue]]:
+    """Parse + validate an IniDocument into a typed AppConfig.
+    Cameras/patrols with an "error"-severity issue are excluded from
+    the result (best-effort load); everything else still loads."""
+    issues: List[ValidationIssue] = []
+    cfg = AppConfig()
+
+    a = doc.get_section_dict("APPLICATION")
+    cfg.app.language = a.get("language", "en")
+    cfg.app.log_level = a.get("log_level", "INFO").upper()
+    cfg.app.log_max_bytes = _pint(a.get("log_max_bytes", "2000000")) or 2_000_000
+    cfg.app.log_backup_count = _pint(a.get("log_backup_count", "5")) or 5
+    cfg.app.autostart_patrols = _pbool(a.get("autostart_patrols", "false")) or False
+    cfg.app.command_timeout_s = _pfloat(a.get("command_timeout_s", "8")) or 8.0
+    cfg.app.dry_run = _pbool(a.get("dry_run", "true"))
+    if cfg.app.dry_run is None:
+        issues.append(ValidationIssue("APPLICATION", "dry_run", a.get("dry_run", ""), "expected true/false; defaulting to true (safe)", "warning"))
+        cfg.app.dry_run = True
+    cfg.app.mock_mode = _pbool(a.get("mock_mode", "true"))
+    if cfg.app.mock_mode is None:
+        issues.append(ValidationIssue("APPLICATION", "mock_mode", a.get("mock_mode", ""), "expected true/false; defaulting to true (safe)", "warning"))
+        cfg.app.mock_mode = True
+
+    s = doc.get_section_dict("SECURITY")
+    try:
+        cfg.security.credential_backend = CredentialBackendKind(s.get("credential_backend", "plaintext").strip().lower())
+    except ValueError:
+        issues.append(ValidationIssue("SECURITY", "credential_backend", s.get("credential_backend", ""), "expected plaintext|windows_credential_manager", "warning"))
+    if cfg.security.credential_backend == CredentialBackendKind.WINDOWS_CREDENTIAL_MANAGER:
+        issues.append(ValidationIssue("SECURITY", "credential_backend", "windows_credential_manager",
+                      "not implemented in this version; using plaintext instead", "warning"))
+        cfg.security.credential_backend = CredentialBackendKind.PLAINTEXT
+    cfg.security.warn_plaintext = _pbool(s.get("warn_plaintext", "true")) if _pbool(s.get("warn_plaintext", "true")) is not None else True
+    cfg.security.redact_logs = _pbool(s.get("redact_logs", "true")) if _pbool(s.get("redact_logs", "true")) is not None else True
+
+    p = doc.get_section_dict("PREVIEW")
+    try:
+        cfg.preview.mode = PreviewMode(p.get("mode", "off").strip().lower())
+    except ValueError:
+        issues.append(ValidationIssue("PREVIEW", "mode", p.get("mode", ""), "expected off|snapshot|low_fps", "warning"))
+    cfg.preview.fps = max(0.1, min(5.0, _pfloat(p.get("fps", "1")) or 1.0))
+    cfg.preview.max_tiles = _pint(p.get("max_tiles", "8")) or 8
+    cfg.preview.tile_width_px = _pint(p.get("tile_width_px", "220")) or 220
+
+    m = doc.get_section_dict("MANUAL_OVERRIDE")
+    try:
+        cfg.manual_override.pause_options_s = [int(x.strip()) for x in m.get("pause_options_s", "120,300,900,0").split(",") if x.strip() != ""]
+    except ValueError:
+        issues.append(ValidationIssue("MANUAL_OVERRIDE", "pause_options_s", m.get("pause_options_s", ""), "expected comma-separated integers", "warning"))
+    cfg.manual_override.default_pause_s = _pint(m.get("default_pause_s", "300")) or 300
+    try:
+        cfg.manual_override.resume_policy = ResumePolicy(m.get("resume_policy", "restart_current_step").strip().lower())
+    except ValueError:
+        issues.append(ValidationIssue("MANUAL_OVERRIDE", "resume_policy", m.get("resume_policy", ""),
+                      "expected restart_current_step|restart_patrol|stay_paused", "warning"))
+    cfg.manual_override.manual_speed_default = max(0.05, min(1.0, _pfloat(m.get("manual_speed_default", "0.5")) or 0.5))
+
+    c = doc.get_section_dict("CLI")
+    cfg.cli.enabled = _pbool(c.get("enabled", "false")) or False
+    cfg.cli.executable = c.get("executable", "")
+    cfg.cli.probe_template = c.get("probe_template", "")
+    cfg.cli.services_template = c.get("services_template", "")
+    cfg.cli.profiles_template = c.get("profiles_template", "")
+    cfg.cli.presets_template = c.get("presets_template", "")
+    cfg.cli.status_template = c.get("status_template", "")
+    cfg.cli.goto_template = c.get("goto_template", "")
+    cfg.cli.move_template = c.get("move_template", "")
+    cfg.cli.stop_template = c.get("stop_template", "")
+    cfg.cli.home_template = c.get("home_template", "")
+    cfg.cli.snapshot_template = c.get("snapshot_template", "")
+
+    sd = doc.get_section_dict("SHUTDOWN")
+    cfg.shutdown.return_home_on_stop = _pbool(sd.get("return_home_on_stop", "false")) or False
+    cfg.shutdown.worker_join_timeout_s = _pfloat(sd.get("worker_join_timeout_s", str(WORKER_JOIN_TIMEOUT_S))) or WORKER_JOIN_TIMEOUT_S
+
+    meta = doc.get_section_dict("META")
+    cfg.version = _pint(meta.get("config_version", str(CONFIG_VERSION))) or CONFIG_VERSION
+
+    for sec in doc.sections_with_prefix("PATROL_"):
+        patrol, p_issues = _parse_patrol(doc, sec)
+        issues.extend(p_issues)
+        if patrol is not None:
+            cfg.patrols[patrol.name] = patrol
+
+    for sec in doc.sections_with_prefix("CAMERA_", exclude_suffixes=("_PRESETS", "_CALIBRATION")):
+        cam, c_issues = _parse_camera(doc, sec)
+        issues.extend(c_issues)
+        if cam is None:
+            continue
+        if cam.patrol_name and cam.patrol_name not in cfg.patrols:
+            issues.append(ValidationIssue(sec, "patrol", cam.patrol_name, "references a patrol that does not exist / failed to parse"))
+            continue
+        if cam.patrol_name:
+            for st in cfg.patrols[cam.patrol_name].steps:
+                if st.action == StepAction.GOTO_PRESET and st.target not in cam.presets:
+                    issues.append(ValidationIssue(sec, "patrol", st.target,
+                                  f"patrol step targets preset '{st.target}' which is not defined in [{sec}_PRESETS]", "warning"))
+        if cam.home_preset and cam.home_preset not in cam.presets:
+            issues.append(ValidationIssue(sec, "home_preset", cam.home_preset, "not defined in this camera's presets", "warning"))
+        cfg.cameras[cam.id] = cam
+
+    return cfg, issues
+
+
+def ensure_app_dirs() -> None:
+    for d in (LOGS_DIR, RUNTIME_DIR, DIAGNOSTICS_DIR, BACKUPS_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+def load_config(path: Path = CONFIG_PATH) -> Tuple[AppConfig, IniDocument, List[ValidationIssue]]:
+    if not path.exists():
+        path.write_text(DEFAULT_CONFIG_TEXT, encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    doc = IniDocument.parse(text)
+    cfg, issues = validate_app_config(doc)
+    return cfg, doc, issues
+
+
+def apply_config_to_ini(doc: IniDocument, cfg: AppConfig) -> None:
+    """Mutate `doc` in place so it reflects every field of `cfg`,
+    preserving anything `cfg` doesn't manage (comments, unknown
+    sections/keys, ordering of untouched lines)."""
+    doc.set("META", "config_version", str(cfg.version))
+
+    doc.set("APPLICATION", "language", cfg.app.language)
+    doc.set("APPLICATION", "log_level", cfg.app.log_level)
+    doc.set("APPLICATION", "log_max_bytes", str(cfg.app.log_max_bytes))
+    doc.set("APPLICATION", "log_backup_count", str(cfg.app.log_backup_count))
+    doc.set("APPLICATION", "autostart_patrols", _bool_str(cfg.app.autostart_patrols))
+    doc.set("APPLICATION", "command_timeout_s", str(cfg.app.command_timeout_s))
+    doc.set("APPLICATION", "dry_run", _bool_str(cfg.app.dry_run))
+    doc.set("APPLICATION", "mock_mode", _bool_str(cfg.app.mock_mode))
+
+    doc.set("SECURITY", "credential_backend", cfg.security.credential_backend.value)
+    doc.set("SECURITY", "warn_plaintext", _bool_str(cfg.security.warn_plaintext))
+    doc.set("SECURITY", "redact_logs", _bool_str(cfg.security.redact_logs))
+
+    doc.set("PREVIEW", "mode", cfg.preview.mode.value)
+    doc.set("PREVIEW", "fps", str(cfg.preview.fps))
+    doc.set("PREVIEW", "max_tiles", str(cfg.preview.max_tiles))
+    doc.set("PREVIEW", "tile_width_px", str(cfg.preview.tile_width_px))
+
+    doc.set("MANUAL_OVERRIDE", "default_pause_s", str(cfg.manual_override.default_pause_s))
+    doc.set("MANUAL_OVERRIDE", "pause_options_s", ",".join(str(x) for x in cfg.manual_override.pause_options_s))
+    doc.set("MANUAL_OVERRIDE", "resume_policy", cfg.manual_override.resume_policy.value)
+    doc.set("MANUAL_OVERRIDE", "manual_speed_default", str(cfg.manual_override.manual_speed_default))
+
+    doc.set("CLI", "enabled", _bool_str(cfg.cli.enabled))
+    doc.set("CLI", "executable", cfg.cli.executable)
+    doc.set("CLI", "probe_template", cfg.cli.probe_template)
+    doc.set("CLI", "services_template", cfg.cli.services_template)
+    doc.set("CLI", "profiles_template", cfg.cli.profiles_template)
+    doc.set("CLI", "presets_template", cfg.cli.presets_template)
+    doc.set("CLI", "status_template", cfg.cli.status_template)
+    doc.set("CLI", "goto_template", cfg.cli.goto_template)
+    doc.set("CLI", "move_template", cfg.cli.move_template)
+    doc.set("CLI", "stop_template", cfg.cli.stop_template)
+    doc.set("CLI", "home_template", cfg.cli.home_template)
+    doc.set("CLI", "snapshot_template", cfg.cli.snapshot_template)
+
+    doc.set("SHUTDOWN", "return_home_on_stop", _bool_str(cfg.shutdown.return_home_on_stop))
+    doc.set("SHUTDOWN", "worker_join_timeout_s", str(cfg.shutdown.worker_join_timeout_s))
+
+    existing_cam_sections = doc.sections_with_prefix("CAMERA_", exclude_suffixes=("_PRESETS", "_CALIBRATION"))
+    current_ids = set(cfg.cameras.keys())
+    for sec in existing_cam_sections:
+        cam_id = sec[len("CAMERA_"):]
+        if cam_id not in current_ids:
+            doc.remove_section(sec)
+            doc.remove_section(f"CAMERA_{cam_id}_PRESETS")
+            doc.remove_section(f"CAMERA_{cam_id}_CALIBRATION")
+
+    for cam in cfg.cameras.values():
+        sec = f"CAMERA_{cam.id}"
+        doc.set(sec, "id", cam.id)
+        doc.set(sec, "name", cam.name)
+        doc.set(sec, "enabled", _bool_str(cam.enabled))
+        doc.set(sec, "host", cam.host)
+        doc.set(sec, "onvif_port", str(cam.onvif_port))
+        doc.set(sec, "rtsp_port", str(cam.rtsp_port))
+        doc.set(sec, "adapter", cam.adapter.value)
+        doc.set(sec, "mock_profile", cam.mock_profile.value)
+        doc.set(sec, "username", cam.username)
+        doc.set(sec, "password", cam.password)
+        doc.set(sec, "profile_token", cam.profile_token)
+        doc.set(sec, "patrol", cam.patrol_name)
+        doc.set(sec, "home_preset", cam.home_preset)
+        doc.set(sec, "connect_timeout_s", str(cam.connect_timeout_s))
+        doc.set(sec, "command_timeout_s", str(cam.command_timeout_s))
+        doc.set(sec, "retry_count", str(cam.retry_count))
+        doc.set(sec, "retry_delay_s", str(cam.retry_delay_s))
+        doc.set(sec, "reconnect_backoff_initial_s", str(cam.reconnect_backoff_initial_s))
+        doc.set(sec, "reconnect_backoff_max_s", str(cam.reconnect_backoff_max_s))
+        doc.set(sec, "on_start", cam.on_start)
+        doc.set(sec, "on_stop", cam.on_stop)
+        doc.set(sec, "arrival_policy", cam.arrival_policy.value)
+
+        presets_sec = f"{sec}_PRESETS"
+        doc.ensure_section(presets_sec)
+        doc.remove_keys_matching(presets_sec, "")
+        for alias, token in cam.presets.items():
+            doc.set(presets_sec, alias, token)
+
+        calib_sec = f"{sec}_CALIBRATION"
+        doc.set(calib_sec, "enabled", _bool_str(cam.calibration.enabled))
+        doc.set(calib_sec, "pan_lr_s", str(cam.calibration.pan_lr_s))
+        doc.set(calib_sec, "pan_rl_s", str(cam.calibration.pan_rl_s))
+        doc.set(calib_sec, "tilt_bt_s", str(cam.calibration.tilt_bt_s))
+        doc.set(calib_sec, "tilt_tb_s", str(cam.calibration.tilt_tb_s))
+        doc.set(calib_sec, "latency_s", str(cam.calibration.latency_s))
+        doc.set(calib_sec, "samples_per_direction", str(cam.calibration.samples_per_direction))
+        doc.set(calib_sec, "resync_every_s", str(cam.calibration.resync_every_s))
+        doc.set(calib_sec, "resync_preset", cam.calibration.resync_preset)
+
+    existing_patrol_sections = doc.sections_with_prefix("PATROL_")
+    current_patrol_names = set(cfg.patrols.keys())
+    for sec in existing_patrol_sections:
+        name = sec[len("PATROL_"):]
+        if name not in current_patrol_names:
+            doc.remove_section(sec)
+
+    for patrol in cfg.patrols.values():
+        sec = f"PATROL_{patrol.name}"
+        doc.set(sec, "enabled", _bool_str(patrol.enabled))
+        doc.set(sec, "repeat_mode", patrol.repeat_mode.value)
+        doc.set(sec, "repeat_count", str(patrol.repeat_count))
+        doc.remove_keys_matching(sec, "step_")
+        for i, step in enumerate(patrol.steps, start=1):
+            doc.set(sec, f"step_{i}", step.to_config_value())
+
+
+def save_config(path: Path, doc: IniDocument, cfg: AppConfig) -> Tuple[bool, List[str]]:
+    """Temp file -> re-parse -> validate -> timestamped backup ->
+    atomic replace. On any failure, the original file is untouched."""
+    working = IniDocument(list(doc.lines))
+    apply_config_to_ini(working, cfg)
+    text = working.to_text()
+
+    ensure_app_dirs()
+    fd, tmp_name = tempfile.mkstemp(prefix="config_", suffix=".tmp", dir=str(path.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+        reparsed = IniDocument.parse(tmp_path.read_text(encoding="utf-8"))
+        _, issues = validate_app_config(reparsed)
+        fatal = [i for i in issues if i.severity == "error"]
+        if fatal:
+            tmp_path.unlink(missing_ok=True)
+            return False, [str(i) for i in fatal]
+
+        if path.exists():
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            shutil.copy2(path, BACKUPS_DIR / f"config_{stamp}.txt.bak")
+
+        os.replace(str(tmp_path), str(path))
+        return True, []
+    except Exception as exc:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False, [f"Unexpected error while saving config.txt: {exc}"]
+
+
+def write_cli_cache(cfg: AppConfig) -> None:
+    """Regenerate runtime/cli_cache.txt, the small plain key=value file
+    ptz_commands.bat reads to build external-CLI command lines.
+    Passwords are never written here (they travel only as the
+    ONVIF_PASSWORD environment variable set for that one subprocess
+    call)."""
+    ensure_app_dirs()
+    lines = [
+        f"CLI_ENABLED={'true' if cfg.cli.enabled else 'false'}",
+        f"CLI_EXECUTABLE={cfg.cli.executable}",
+        f"TPL_PROBE={cfg.cli.probe_template}",
+        f"TPL_SERVICES={cfg.cli.services_template}",
+        f"TPL_PROFILES={cfg.cli.profiles_template}",
+        f"TPL_PRESETS={cfg.cli.presets_template}",
+        f"TPL_STATUS={cfg.cli.status_template}",
+        f"TPL_GOTO={cfg.cli.goto_template}",
+        f"TPL_MOVE={cfg.cli.move_template}",
+        f"TPL_STOP={cfg.cli.stop_template}",
+        f"TPL_HOME={cfg.cli.home_template}",
+        f"TPL_SNAPSHOT={cfg.cli.snapshot_template}",
+    ]
+    for cam in cfg.cameras.values():
+        lines.append(f"CAM.{cam.id}.HOST={cam.host}")
+        lines.append(f"CAM.{cam.id}.PORT={cam.onvif_port}")
+        lines.append(f"CAM.{cam.id}.USER={cam.username}")
+        lines.append(f"CAM.{cam.id}.PROFILE={cam.profile_token}")
+        home_token = cam.presets.get(cam.home_preset, "")
+        lines.append(f"CAM.{cam.id}.HOME_PRESET={home_token}")
+    CLI_CACHE_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 1440
+
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 5. CREDENTIAL HANDLING AND LOG REDACTION
+# ======================================================================
+
+class SecretRedactor:
+    """Tracks the set of currently-configured secrets (camera
+    passwords) and scrubs them out of any text before it is logged
+    or displayed. Also used as a logging.Filter on every handler."""
+
+    def __init__(self) -> None:
+        self._secrets: List[str] = []
+        self._lock = threading.Lock()
+
+    def update_from_config(self, cfg: AppConfig) -> None:
+        with self._lock:
+            self._secrets = [c.password for c in cfg.cameras.values() if c.password]
+
+    def redact(self, text: Optional[str]) -> str:
+        if not text:
+            return "" if text is None else text
+        out = text
+        with self._lock:
+            secrets = list(self._secrets)
+        for secret in secrets:
+            if secret:
+                out = out.replace(secret, "***REDACTED***")
+        return out
+
+    def as_logging_filter(self) -> logging.Filter:
+        redactor = self
+
+        class _Filter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                try:
+                    record.msg = redactor.redact(str(record.msg))
+                    if record.args:
+                        record.args = tuple(
+                            redactor.redact(a) if isinstance(a, str) else a for a in record.args
+                        )
+                except Exception:
+                    pass
+                return True
+
+        return _Filter()
+
+
+_XML_SECRET_PATTERNS = [
+    re.compile(r"(<[\w:]*[Pp]assword[^>]*>)[^<]*(</[\w:]*[Pp]assword[^>]*>)"),
+    re.compile(r"(Authorization:\s*)\S+", re.IGNORECASE),
+    re.compile(r"([?&]password=)[^&\s]+", re.IGNORECASE),
+]
+
+
+def redact_xml_like(text: str) -> str:
+    """Best-effort scrub of WS-Security / Basic-Auth style secrets from
+    raw external-CLI output before it is ever written to disk. Not a
+    formal guarantee -- defense in depth only."""
+    out = text
+    for pat in _XML_SECRET_PATTERNS:
+        out = pat.sub(lambda m: (m.group(1) + "***REDACTED***" + (m.group(2) if m.lastindex and m.lastindex >= 2 else "")), out)
+    return out
+
+
+def get_password(cam: CameraConfig, cfg: AppConfig) -> str:
+    """Single choke point for reading a camera's credential. Only the
+    plaintext backend is implemented; windows_credential_manager is
+    normalized to plaintext during validation with a warning."""
+    return cam.password
+
+
+# ======================================================================
+# 6. ROTATING LOGGING
+# ======================================================================
+
+_camera_loggers: Dict[str, logging.Logger] = {}
+_redactor = SecretRedactor()
+
+
+def setup_logging(level_name: str = "INFO", max_bytes: int = 2_000_000, backup_count: int = 5) -> logging.Logger:
+    ensure_app_dirs()
+    level = getattr(logging, level_name.upper(), logging.INFO)
+
+    app_logger = logging.getLogger("ptz.app")
+    app_logger.setLevel(level)
+    app_logger.handlers.clear()
+    handler = logging.handlers.RotatingFileHandler(
+        LOGS_DIR / "application.log", maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
+    handler.addFilter(_redactor.as_logging_filter())
+    app_logger.addHandler(handler)
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter("%(levelname)-8s %(name)s: %(message)s"))
+    console.addFilter(_redactor.as_logging_filter())
+    app_logger.addHandler(console)
+    app_logger.propagate = False
+    return app_logger
+
+
+def setup_startup_logger() -> logging.Logger:
+    """A tiny, always-available logger that works even before the main
+    config/logging is up, so a crash during config load is still
+    diagnosable."""
+    ensure_app_dirs()
+    logger = logging.getLogger("ptz.startup")
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        handler = logging.handlers.RotatingFileHandler(
+            LOGS_DIR / "startup.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s: %(message)s"))
+        logger.addHandler(handler)
+        logger.propagate = False
+    return logger
+
+
+def setup_diagnostics_logger() -> logging.Logger:
+    ensure_app_dirs()
+    logger = logging.getLogger("ptz.diagnostics")
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        handler = logging.handlers.RotatingFileHandler(
+            LOGS_DIR / "diagnostics.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s: %(message)s"))
+        handler.addFilter(_redactor.as_logging_filter())
+        logger.addHandler(handler)
+        logger.propagate = False
+    return logger
+
+
+def get_camera_logger(camera_id: str, level_name: str = "INFO", max_bytes: int = 2_000_000, backup_count: int = 5) -> logging.Logger:
+    if camera_id in _camera_loggers:
+        return _camera_loggers[camera_id]
+    ensure_app_dirs()
+    logger = logging.getLogger(f"ptz.camera.{camera_id}")
+    logger.setLevel(getattr(logging, level_name.upper(), logging.INFO))
+    handler = logging.handlers.RotatingFileHandler(
+        LOGS_DIR / f"camera_{camera_id}.log", maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s: %(message)s"))
+    handler.addFilter(_redactor.as_logging_filter())
+    logger.addHandler(handler)
+    logger.propagate = False
+    _camera_loggers[camera_id] = logger
+    return logger
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 1585
+
+Building a command-line bridge for camera control.
+Defining the abstract camera interface and command runner.
+Handling cross-platform quirks in the subprocess execution helper.
+Matching failure-category strings between the parser and batch output.
+Wiring the CLI bridge to invoke batch commands securely.
+Implementing preset and movement commands with dry-run support.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 7. BAT COMMAND BRIDGE
+# ======================================================================
+
+from abc import ABC, abstractmethod  # noqa: E402  (kept local to this section on purpose)
+
+
+def run_bat_command(argv: List[str], timeout_s: float, extra_env: Optional[Dict[str, str]] = None) -> Tuple[int, str, str]:
+    """Run ptz_commands.bat with an argument list (never a shell
+    string), hidden window, hard timeout, captured stdout/stderr.
+    Returns (returncode, stdout, stderr). Synthetic codes: -1=timeout,
+    -2=could not launch (missing bat / OS error)."""
+    if not BAT_PATH.exists():
+        return -2, "", f"ptz_commands.bat not found at {BAT_PATH}"
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+    creationflags = 0
+    if IS_WINDOWS:
+        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+    try:
+        proc = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout_s,
+            env=env, creationflags=creationflags,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired as exc:
+        return -1, (exc.stdout or ""), (exc.stderr or "") + "\n(timed out)"
+    except OSError as exc:
+        return -2, "", str(exc)
+
+
+_CATEGORY_BY_TOKEN: Dict[str, Optional[FailureCategory]] = {
+    "TIMEOUT": FailureCategory.TIMEOUT,
+    "AUTHENTICATION": FailureCategory.AUTHENTICATION,
+    "NETWORK": FailureCategory.NETWORK,
+    "UNSUPPORTED": FailureCategory.UNSUPPORTED,
+    "INVALID_RESPONSE": FailureCategory.INVALID_RESPONSE,
+    "CLI_MISSING": FailureCategory.CLI_MISSING,
+    "CONFIGURATION": FailureCategory.CONFIGURATION,
+    "UNKNOWN": FailureCategory.UNKNOWN,
+    "NONE": None,
+}
+_RESULT_LINE_RE = re.compile(r"^RESULT:(OK|ERROR):([A-Za-z_]*):(.*)$")
+
+
+def parse_result_line(stdout: str) -> Tuple[bool, Optional[FailureCategory], str]:
+    """ptz_commands.bat prints exactly one `RESULT:OK|ERROR:CATEGORY:message`
+    line as its final structured output line. That is the machine-
+    readable contract between BAT and Python."""
+    for line in reversed(stdout.splitlines()):
+        m = _RESULT_LINE_RE.match(line.strip())
+        if m:
+            status, cat_raw, msg = m.groups()
+            category = _CATEGORY_BY_TOKEN.get(cat_raw.upper(), FailureCategory.UNKNOWN)
+            return status == "OK", category, msg
+    return False, FailureCategory.INVALID_RESPONSE, "no RESULT: line found in ptz_commands.bat output"
+
+
+class CameraBridge(ABC):
+    """Uniform interface implemented by MockCameraBridge (section 11)
+    and CliCameraBridge (below). A CameraWorker only ever talks to
+    this interface, so it does not care which concrete bridge it
+    holds."""
+
+    def __init__(self, camera: CameraConfig, cfg: AppConfig, logger: logging.Logger):
+        self.camera = camera
+        self.cfg = cfg
+        self.logger = logger
+
+    @abstractmethod
+    def probe(self) -> CommandResult: ...
+
+    @abstractmethod
+    def get_services(self) -> CommandResult: ...
+
+    @abstractmethod
+    def get_profiles(self) -> CommandResult: ...
+
+    @abstractmethod
+    def get_presets(self) -> CommandResult: ...
+
+    @abstractmethod
+    def get_status(self) -> CommandResult: ...
+
+    @abstractmethod
+    def goto_preset(self, preset_token: str) -> CommandResult: ...
+
+    @abstractmethod
+    def move(self, pan: float, tilt: float, zoom: float, move_s: float) -> CommandResult: ...
+
+    @abstractmethod
+    def stop(self) -> CommandResult: ...
+
+    @abstractmethod
+    def home(self) -> CommandResult: ...
+
+    @abstractmethod
+    def snapshot(self, output_path: Path) -> CommandResult: ...
+
+
+class CliCameraBridge(CameraBridge):
+    """Real-camera bridge. Talks to a camera ONLY through
+    ptz_commands.bat, which in turn runs the operator-configured
+    external ONVIF CLI. No SOAP / WS-Security / XML signing happens
+    in this file or in the BAT file -- that logic lives entirely in
+    the external tool the operator installs and configures."""
+
+    def _call(self, action: str, args: List[str], timeout_s: Optional[float] = None) -> CommandResult:
+        if not self.cfg.cli.enabled:
+            return CommandResult(False, FailureCategory.CLI_MISSING,
+                                  "adapter=cli selected but [CLI] enabled=false in config.txt")
+        timeout_s = timeout_s or self.camera.command_timeout_s
+        argv = [str(BAT_PATH), action, self.camera.id, *args]
+        env: Dict[str, str] = {}
+        if self.camera.password:
+            env["ONVIF_PASSWORD"] = self.camera.password
+        self.logger.info("BAT call: %s", " ".join(argv[1:]))
+        rc, out, err = run_bat_command(argv, timeout_s, env)
+        out_r = redact_xml_like(_redactor.redact(out))
+        err_r = redact_xml_like(_redactor.redact(err))
+        if rc == -1:
+            return CommandResult(False, FailureCategory.TIMEOUT, f"ptz_commands.bat {action} timed out after {timeout_s:.1f}s")
+        if rc == -2:
+            return CommandResult(False, FailureCategory.CLI_MISSING, f"could not launch ptz_commands.bat: {err_r}")
+        ok, category, message = parse_result_line(out)
+        if not ok and category is None:
+            category = FailureCategory.UNKNOWN
+        return CommandResult(ok, category, message or err_r or out_r,
+                              {"stdout": out_r, "stderr": err_r, "returncode": rc})
+
+    def probe(self) -> CommandResult:
+        return self._call("probe", [])
+
+    def get_services(self) -> CommandResult:
+        return self._call("services", [])
+
+    def get_profiles(self) -> CommandResult:
+        return self._call("profiles", [])
+
+    def get_presets(self) -> CommandResult:
+        return self._call("presets", [])
+
+    def get_status(self) -> CommandResult:
+        return self._call("status", [])
+
+    def goto_preset(self, preset_token: str) -> CommandResult:
+        if self.cfg.app.dry_run:
+            self.logger.info("[DRY-RUN] would GOTO_PRESET token=%s", preset_token)
+            return CommandResult(True, None, "dry-run: not actually sent")
+        return self._call("goto", [preset_token])
+
+    def move(self, pan: float, tilt: float, zoom: float, move_s: float) -> CommandResult:
+        if self.cfg.app.dry_run:
+            self.logger.info("[DRY-RUN] would MOVE pan=%.2f tilt=%.2f zoom=%.2f for %.2fs", pan, tilt, zoom, move_s)
+            return CommandResult(True, None, "dry-run: not actually sent")
+        return self._call("move", [f"{pan:.3f}", f"{tilt:.3f}", f"{zoom:.3f}", f"{move_s:.2f}"],
+                           timeout_s=move_s + self.camera.command_timeout_s)
+
+    def stop(self) -> CommandResult:
+        # Stop is always allowed even in dry-run: it can never move a camera.
+        return self._call("stop-camera", [])
+
+    def home(self) -> CommandResult:
+        if self.cfg.app.dry_run:
+            self.logger.info("[DRY-RUN] would GOTO_HOME")
+            return CommandResult(True, None, "dry-run: not actually sent")
+        return self._call("home", [])
+
+    def snapshot(self, output_path: Path) -> CommandResult:
+        return self._call("snapshot", [str(output_path)])
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 1758
+
+Building a camera capability and status model system.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 8. CAMERA CAPABILITY AND STATUS MODELS
+# ======================================================================
+# (CapabilityReport dataclass itself lives in section 3.)
+
+def run_capability_probe(camera: CameraConfig, bridge: "CameraBridge") -> CapabilityReport:
+    """Runs probe/services/profiles/presets/status against the given
+    bridge (mock or CLI) and assembles a CapabilityReport. This never
+    moves the camera -- every call here is read-only."""
+    report = CapabilityReport(
+        camera_id=camera.id, host=camera.host, configured_onvif_port=camera.onvif_port,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    probe_res = bridge.probe()
+    if probe_res.ok:
+        report.discovered_xaddr = str(probe_res.data.get("xaddr", ""))
+        report.auth_method = str(probe_res.data.get("auth_method", ""))
+        skew = probe_res.data.get("clock_skew_s")
+        report.clock_skew_s = float(skew) if isinstance(skew, (int, float)) else None
+    else:
+        report.warnings.append(f"probe failed: {probe_res.message}")
+
+    services_res = bridge.get_services()
+    if services_res.ok:
+        report.services = list(services_res.data.get("services", []))
+    else:
+        report.warnings.append(f"services failed: {services_res.message}")
+
+    profiles_res = bridge.get_profiles()
+    if profiles_res.ok:
+        report.profiles = list(profiles_res.data.get("profiles", []))
+        report.chosen_profile = str(profiles_res.data.get("chosen_profile", camera.profile_token or
+                                     (report.profiles[0] if report.profiles else "")))
+    else:
+        report.warnings.append(f"profiles failed: {profiles_res.message}")
+
+    presets_res = bridge.get_presets()
+    if presets_res.ok:
+        report.presets = list(presets_res.data.get("presets", []))
+        report.goto_preset_available = bool(report.presets)
+    else:
+        report.warnings.append(f"presets failed: {presets_res.message}")
+
+    status_res = bridge.get_status()
+    if status_res.ok:
+        report.status_position_available = bool(status_res.data.get("position_available", False))
+        report.move_status_available = bool(status_res.data.get("move_status_available", False))
+    else:
+        report.warnings.append(f"status failed: {status_res.message}")
+
+    report.absolute_move_available = bool(status_res.data.get("absolute_move_available", False)) if status_res.ok else False
+    report.relative_move_available = bool(status_res.data.get("relative_move_available", False)) if status_res.ok else False
+    report.continuous_move_available = bool(status_res.data.get("continuous_move_available", False)) if status_res.ok else False
+    report.stop_available = True
+    report.goto_home_available = bool(camera.home_preset) and report.goto_preset_available
+    report.preset_speed_available = bool(status_res.data.get("preset_speed_available", False)) if status_res.ok else False
+
+    if report.goto_preset_available:
+        report.recommended_tier = "presets"
+    elif report.absolute_move_available or report.relative_move_available:
+        report.recommended_tier = "absolute_relative"
+    elif report.continuous_move_available:
+        report.recommended_tier = "continuous_move"
+    else:
+        report.recommended_tier = "estimation_required"
+        report.warnings.append("no preset/absolute/relative/continuous capability confirmed; "
+                                "time-calibrated estimation would be required but is NOT implemented in this version")
+
+    if not report.status_position_available:
+        report.warnings.append("GetStatus does not report a position; never present an estimated "
+                                "percentage as a measured coordinate")
+    return report
+
+
+def save_capability_report(report: CapabilityReport) -> Tuple[Path, Path]:
+    """Writes redacted JSON + human-readable TXT under diagnostics/.
+    Raw XML is intentionally not saved in this version: real-CLI
+    syntax is unverified, so we do not assume any particular raw
+    response shape."""
+    ensure_app_dirs()
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = DIAGNOSTICS_DIR / f"probe_{report.camera_id}_{stamp}.json"
+    txt_path = DIAGNOSTICS_DIR / f"probe_{report.camera_id}_{stamp}.txt"
+    json_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    txt_path.write_text(report.to_text(), encoding="utf-8")
+    return json_path, txt_path
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 1847
+
+Designing a multithreaded camera-handling system architecture.
+Implementing the per-camera worker thread class and command queue.
+Adding connection retries and interruptible wait logic.
+Starting the run loop and handling initial camera startup behavior.
+Coding the main loop and manual-override resume logic.
+Simplifying command handling and processing emergency and shutdown stops.
+Handling manual moves, pauses, home, and preset commands.
+Rethinking config reload to avoid stale bridge references.
+Rebuilding patrol-step execution with presets, settling, and dwell logic.
+Executing preset moves and countdowns, handling step failures.
+Adding recovery logic and a manual-move dead-man timeout check.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 9. CAMERA WORKER
+# ======================================================================
+
+class CameraWorker(threading.Thread):
+    """One independent thread per enabled camera. Owns a CameraBridge
+    and a PriorityQueue of WorkerCommand; every command for this
+    camera is handled strictly one at a time, in this thread only --
+    the bridge is never called concurrently from anywhere else. If
+    this worker errors or blocks, no other camera's worker is
+    affected."""
+
+    def __init__(self, camera: CameraConfig, patrol: Optional[Patrol], bridge: CameraBridge,
+                 cfg: AppConfig, event_queue: "queue.Queue[WorkerEvent]", logger: logging.Logger):
+        super().__init__(name=f"CameraWorker-{camera.id}", daemon=True)
+        self.camera = camera
+        self.patrol = patrol
+        self.bridge = bridge
+        self.cfg = cfg
+        self.event_queue = event_queue
+        self.logger = logger
+
+        self.command_queue: "queue.PriorityQueue[WorkerCommand]" = queue.PriorityQueue()
+        self._stop_event = threading.Event()
+        self._wake_event = threading.Event()
+
+        self.state = CameraState.DISCONNECTED
+        self.connected = False
+        self.patrol_running = False
+        self.paused = False
+        self.step_index = 0
+        self.cycle_count = 0
+        self.last_error = ""
+        self.last_step_label = ""
+        self.countdown_s = 0.0
+        self.manual_override_until: Optional[float] = None
+        self._manual_moving = False
+        self._last_manual_move_at: Optional[float] = None
+        self._reconnect_backoff = camera.reconnect_backoff_initial_s
+
+    # ---- external API (safe to call from any thread) ----
+    def enqueue(self, command_type: CommandType, payload: Optional[Dict[str, Any]] = None) -> None:
+        self.command_queue.put(make_command(command_type, payload))
+        self._wake_event.set()
+
+    def request_stop_thread(self) -> None:
+        self._stop_event.set()
+        self._wake_event.set()
+
+    # ---- internal helpers ----
+    def _emit(self, event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
+        self.event_queue.put(WorkerEvent(self.camera.id, event_type, payload or {}))
+
+    def _set_state(self, state: CameraState) -> None:
+        if self.state != state:
+            self.state = state
+        self._emit("STATE", {"state": state.value})
+
+    def _log_and_emit_error(self, message: str, category: Optional[FailureCategory]) -> None:
+        self.last_error = message
+        self.logger.error("%s (%s)", message, category.value if category else "n/a")
+        self._emit("ERROR", {"message": message, "category": category.value if category else ""})
+
+    def _pop_command_nowait(self) -> Optional[WorkerCommand]:
+        try:
+            return self.command_queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    # ---- connection ----
+    def _connect(self) -> bool:
+        self._set_state(CameraState.CONNECTING)
+        result = self.bridge.probe()
+        if result.ok:
+            self.connected = True
+            self._reconnect_backoff = self.camera.reconnect_backoff_initial_s
+            self._emit("LOG", {"message": f"{self.camera.id}: connected"})
+            return True
+        self.connected = False
+        self._log_and_emit_error(f"connect failed: {result.message}", result.category)
+        return False
+
+    def _connect_with_retry_once(self) -> bool:
+        for _attempt in range(1, self.camera.retry_count + 1):
+            if self._stop_event.is_set():
+                return False
+            if self._connect():
+                return True
+            self._interruptible_wait(self.camera.retry_delay_s)
+        return False
+
+    # ---- interruptible wait ----
+    def _interruptible_wait(self, total_s: float) -> bool:
+        """Sleeps up to total_s seconds in small slices. Returns True if
+        the full duration elapsed, False if interrupted by shutdown or
+        by a new command at/under PREEMPT_PRIORITY_THRESHOLD (that
+        command is left in the queue for the caller to pop/handle)."""
+        end_at = time.time() + max(0.0, total_s)
+        while time.time() < end_at:
+            if self._stop_event.is_set():
+                return False
+            remaining = end_at - time.time()
+            self._wake_event.wait(timeout=min(WAIT_SLICE_S, max(0.01, remaining)))
+            if self._wake_event.is_set():
+                self._wake_event.clear()
+                try:
+                    top = self.command_queue.queue[0]  # best-effort peek of the heap root
+                    if top.priority <= PREEMPT_PRIORITY_THRESHOLD:
+                        return False
+                except IndexError:
+                    pass
+        return True
+
+    def _countdown_wait(self, total_s: float) -> bool:
+        end_at = time.time() + total_s
+        while True:
+            remaining = end_at - time.time()
+            self.countdown_s = max(0.0, remaining)
+            self._emit("COUNTDOWN", {"seconds": self.countdown_s})
+            if remaining <= 0:
+                return True
+            if not self._interruptible_wait(min(1.0, remaining)):
+                cmd = self._pop_command_nowait()
+                if cmd is not None:
+                    self._handle_command(cmd)
+                return False
+
+    # ---- manual override bookkeeping ----
+    def _check_manual_dead_man(self) -> None:
+        if self._manual_moving and self._last_manual_move_at is not None:
+            if time.time() - self._last_manual_move_at > MANUAL_MOVE_DEADMAN_S:
+                self.bridge.stop()
+                self._manual_moving = False
+                self._emit("LOG", {"message": f"{self.camera.id}: dead-man Stop (no manual refresh received)"})
+
+    def _check_manual_override_expiry(self) -> None:
+        if self.manual_override_until is not None and time.time() >= self.manual_override_until:
+            self._resume_from_pause()
+
+    def _resume_from_pause(self) -> None:
+        policy = self.cfg.manual_override.resume_policy
+        if policy == ResumePolicy.STAY_PAUSED:
+            self.manual_override_until = None
+            return
+        if policy == ResumePolicy.RESTART_PATROL:
+            self.step_index = 0
+        self.paused = False
+        self.manual_override_until = None
+        self._set_state(CameraState.IDLE)
+        self._emit("LOG", {"message": f"{self.camera.id}: resumed ({policy.value})"})
+
+    # ---- command handling ----
+    def _handle_command(self, cmd: WorkerCommand) -> None:
+        ct = cmd.command_type
+
+        if ct == CommandType.EMERGENCY_STOP:
+            self._set_state(CameraState.STOPPING)
+            res = self.bridge.stop()
+            self.patrol_running = False
+            self.paused = True
+            self.manual_override_until = None
+            self._manual_moving = False
+            self._emit("LOG", {"message": f"{self.camera.id}: EMERGENCY STOP ({'ok' if res.ok else res.message})"})
+            self._set_state(CameraState.PAUSED)
+            return
+
+        if ct == CommandType.SHUTDOWN_STOP:
+            self._set_state(CameraState.STOPPING)
+            self.bridge.stop()
+            if self.cfg.shutdown.return_home_on_stop and self.camera.home_preset:
+                token = self.camera.presets.get(self.camera.home_preset, "")
+                if token:
+                    self.bridge.goto_preset(token)
+            self._stop_event.set()
+            return
+
+        if ct == CommandType.MANUAL_STOP:
+            self.bridge.stop()
+            self._manual_moving = False
+            self._last_manual_move_at = None
+            return
+
+        if ct == CommandType.MANUAL_MOVE:
+            self.paused = True
+            pause_s = cmd.payload.get("override_pause_s", self.cfg.manual_override.default_pause_s)
+            self.manual_override_until = None if not pause_s else time.time() + float(pause_s)
+            self._set_state(CameraState.MANUAL_OVERRIDE)
+            pan = float(cmd.payload.get("pan", 0.0))
+            tilt = float(cmd.payload.get("tilt", 0.0))
+            zoom = float(cmd.payload.get("zoom", 0.0))
+            res = self.bridge.move(pan, tilt, zoom, MANUAL_MOVE_CHUNK_S)
+            self.bridge.stop()  # bounded chunk always internally followed by Stop
+            self._manual_moving = True
+            self._last_manual_move_at = time.time()
+            if not res.ok:
+                self._log_and_emit_error(f"manual move failed: {res.message}", res.category)
+            return
+
+        if ct == CommandType.PAUSE:
+            self.paused = True
+            pause_s = cmd.payload.get("pause_s", 0)
+            self.manual_override_until = None if not pause_s else time.time() + float(pause_s)
+            self._set_state(CameraState.PAUSED)
+            return
+
+        if ct == CommandType.RESUME:
+            self._resume_from_pause()
+            return
+
+        if ct == CommandType.HOME:
+            if not self.camera.home_preset:
+                self._log_and_emit_error("HOME requested but no home_preset configured", FailureCategory.CONFIGURATION)
+                return
+            token = self.camera.presets.get(self.camera.home_preset, "")
+            self._set_state(CameraState.MOVING)
+            res = self.bridge.goto_preset(token) if token else CommandResult(False, FailureCategory.CONFIGURATION, "home preset has no token")
+            if not res.ok:
+                self._log_and_emit_error(f"HOME failed: {res.message}", res.category)
+            self._set_state(CameraState.IDLE)
+            return
+
+        if ct == CommandType.PRESET_TEST:
+            token = cmd.payload.get("preset_token", "")
+            self._set_state(CameraState.MOVING)
+            res = self.bridge.goto_preset(token)
+            if not res.ok:
+                self._log_and_emit_error(f"preset test failed: {res.message}", res.category)
+            self._set_state(CameraState.IDLE)
+            return
+
+    # ---- patrol progression ----
+    def _perform_step_action(self, step: PatrolStep) -> bool:
+        self._set_state(CameraState.MOVING)
+        if step.action == StepAction.GOTO_PRESET:
+            token = self.camera.presets.get(step.target, "")
+            if not token:
+                self._log_and_emit_error(f"preset alias '{step.target}' has no token", FailureCategory.CONFIGURATION)
+                return self._handle_step_failure()
+            res = self.bridge.goto_preset(token)
+        elif step.action == StepAction.GOTO_HOME:
+            token = self.camera.presets.get(self.camera.home_preset, "")
+            if not token:
+                self._log_and_emit_error("GOTO_HOME step but no home_preset/token configured", FailureCategory.CONFIGURATION)
+                return self._handle_step_failure()
+            res = self.bridge.goto_preset(token)
+        elif step.action == StepAction.WAIT:
+            res = CommandResult(True)
+        elif step.action == StepAction.STOP:
+            res = self.bridge.stop()
+        elif step.action == StepAction.CONTINUOUS_MOVE:
+            res = self.bridge.move(step.pan, step.tilt, step.zoom, step.move_s)
+            self.bridge.stop()  # ALWAYS followed internally by an explicit Stop
+        else:
+            res = CommandResult(False, FailureCategory.CONFIGURATION, f"unknown action {step.action}")
+
+        if not res.ok:
+            self._log_and_emit_error(f"step failed: {res.message}", res.category)
+            return self._handle_step_failure()
+        return True
+
+    def _handle_step_failure(self) -> bool:
+        self.connected = False
+        self._set_state(CameraState.RECOVERING)
+        return False
+
+    def _execute_next_patrol_step(self) -> None:
+        patrol = self.patrol
+        assert patrol is not None
+        steps = patrol.steps
+        if self.step_index >= len(steps):
+            self.step_index = 0
+            self.cycle_count += 1
+            if patrol.repeat_mode == RepeatMode.FIXED_COUNT and self.cycle_count >= max(1, patrol.repeat_count):
+                self.patrol_running = False
+                self._set_state(CameraState.IDLE)
+                self._emit("LOG", {"message": f"{self.camera.id}: patrol finished {self.cycle_count} cycle(s)"})
+                return
+
+        step = steps[self.step_index]
+        if not step.enabled:
+            self.step_index += 1
+            return
+
+        self.last_step_label = f"{self.step_index + 1}/{len(steps)}: {step.short_label()}"
+        self._emit("STEP", {"label": self.last_step_label, "index": self.step_index})
+
+        if not self._perform_step_action(step):
+            return
+
+        if step.settle_s > 0 and step.action in (StepAction.GOTO_PRESET, StepAction.GOTO_HOME, StepAction.CONTINUOUS_MOVE):
+            self._set_state(CameraState.SETTLING)
+            if not self._countdown_wait(step.settle_s):
+                return
+
+        if step.dwell_s > 0:
+            self._set_state(CameraState.DWELLING)
+            if not self._countdown_wait(step.dwell_s):
+                return
+
+        self.step_index += 1
+
+    def _recover(self) -> None:
+        self._set_state(CameraState.RECOVERING)
+        if not self._interruptible_wait(self._reconnect_backoff):
+            return
+        self._reconnect_backoff = min(self.camera.reconnect_backoff_max_s, self._reconnect_backoff * 2)
+        if self._connect():
+            self.bridge.stop()
+            if self.camera.home_preset:
+                token = self.camera.presets.get(self.camera.home_preset, "")
+                if token:
+                    self.bridge.goto_preset(token)
+                    self._interruptible_wait(1.0)
+            self._set_state(CameraState.IDLE)
+
+    # ---- main loop ----
+    def run(self) -> None:
+        try:
+            self._run_loop()
+        except Exception:
+            self.logger.error("worker crashed: %s", traceback.format_exc())
+            self._set_state(CameraState.ERROR)
+            self._emit("ERROR", {"message": "worker thread crashed, see camera log for details", "category": "unknown"})
+
+    def _run_loop(self) -> None:
+        self._connect_with_retry_once()
+        if self.connected:
+            if self.camera.on_start in ("stop", "goto_home"):
+                self.bridge.stop()
+            if self.camera.on_start == "goto_home" and self.camera.home_preset:
+                token = self.camera.presets.get(self.camera.home_preset, "")
+                if token:
+                    self.bridge.goto_preset(token)
+                    self._interruptible_wait(1.0)
+
+        self.patrol_running = (self.patrol is not None and self.patrol.enabled
+                                and self.patrol.repeat_mode != RepeatMode.DISABLED)
+        self._emit("LOG", {"message": f"{self.camera.id}: worker started (patrol_running={self.patrol_running})"})
+
+        while not self._stop_event.is_set():
+            cmd = self._pop_command_nowait()
+            if cmd is not None:
+                self._handle_command(cmd)
+                continue
+
+            if self.paused:
+                self._check_manual_dead_man()
+                self._check_manual_override_expiry()
+                self._set_state(CameraState.MANUAL_OVERRIDE if (self._manual_moving or self.manual_override_until is not None)
+                                 else CameraState.PAUSED)
+                self._interruptible_wait(WAIT_SLICE_S)
+                continue
+
+            if not self.connected:
+                self._recover()
+                continue
+
+            if self.patrol_running and self.patrol and self.patrol.enabled_steps():
+                self._execute_next_patrol_step()
+            else:
+                self._set_state(CameraState.IDLE)
+                self._interruptible_wait(0.3)
+
+        self._emit("LOG", {"message": f"{self.camera.id}: worker loop exited"})
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 2213
+
+Building a patrol engine and worker management system.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 10. PATROL ENGINE / WORKER MANAGER
+# ======================================================================
+# Most patrol logic lives inside CameraWorker itself (each camera's
+# patrol is independent by construction). WorkerManager is the thin
+# layer that owns the set of workers, builds the right bridge for
+# each camera, and provides the whole-fleet operations (start all,
+# stop all, Emergency Stop).
+
+def resolve_adapter_mode(camera: CameraConfig, app: AppSettings) -> AdapterMode:
+    if camera.adapter == AdapterMode.CLI:
+        return AdapterMode.CLI
+    if camera.adapter == AdapterMode.MOCK:
+        return AdapterMode.MOCK
+    return AdapterMode.MOCK if app.mock_mode else AdapterMode.CLI
+
+
+def build_bridge_for_camera(camera: CameraConfig, cfg: AppConfig, logger: logging.Logger) -> CameraBridge:
+    mode = resolve_adapter_mode(camera, cfg.app)
+    if mode == AdapterMode.MOCK:
+        return MockCameraBridge(camera, cfg, logger)
+    return CliCameraBridge(camera, cfg, logger)
+
+
+class WorkerManager:
+    """Owns every CameraWorker. Created once by the GUI and rebuilt
+    (stop_all -> build_workers -> start_all) whenever the operator
+    saves configuration changes."""
+
+    def __init__(self, event_queue: "queue.Queue[WorkerEvent]"):
+        self.event_queue = event_queue
+        self.workers: Dict[str, CameraWorker] = {}
+        self.cfg: Optional[AppConfig] = None
+
+    def build_workers(self, cfg: AppConfig) -> None:
+        self.cfg = cfg
+        self.workers = {}
+        for cam in cfg.enabled_cameras():
+            logger = get_camera_logger(cam.id, cfg.app.log_level, cfg.app.log_max_bytes, cfg.app.log_backup_count)
+            bridge = build_bridge_for_camera(cam, cfg, logger)
+            patrol = cfg.patrols.get(cam.patrol_name)
+            worker = CameraWorker(cam, patrol, bridge, cfg, self.event_queue, logger)
+            self.workers[cam.id] = worker
+
+    def start_all(self) -> None:
+        for w in self.workers.values():
+            w.start()
+
+    def stop_all(self, join: bool = True, timeout_s: float = WORKER_JOIN_TIMEOUT_S) -> None:
+        for w in self.workers.values():
+            w.enqueue(CommandType.SHUTDOWN_STOP)
+        if join:
+            deadline = time.time() + timeout_s
+            for w in self.workers.values():
+                remaining = max(0.1, deadline - time.time())
+                w.join(timeout=remaining)
+
+    def emergency_stop_all(self) -> None:
+        for w in self.workers.values():
+            w.enqueue(CommandType.EMERGENCY_STOP)
+
+    def get_worker(self, camera_id: str) -> Optional[CameraWorker]:
+        return self.workers.get(camera_id)
+
+    def status_counts(self) -> Dict[str, int]:
+        enabled = len(self.workers)
+        connected = sum(1 for w in self.workers.values() if w.connected)
+        running = sum(1 for w in self.workers.values() if w.patrol_running and not w.paused)
+        paused = sum(1 for w in self.workers.values() if w.paused)
+        offline = sum(1 for w in self.workers.values() if not w.connected)
+        return {"enabled": enabled, "connected": connected, "running": running,
+                "paused": paused, "offline": offline}
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 2287
+
+Building a mock camera bridge with multiple operating profiles.
+Simulating probes and service checks for each mock profile.
+Implementing preset navigation, movement, and stop commands for the mock bridge.
+Writing snapshot capture with profile-based mock image generation.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 11. MOCK CAMERA IMPLEMENTATION
+# ======================================================================
+
+class MockCameraBridge(CameraBridge):
+    """Fully simulated camera -- never touches ptz_commands.bat or any
+    external process. Lets the whole application (independent
+    patrols, pause/resume, manual override, Emergency Stop, reconnect,
+    worker isolation, preview tiles) be exercised with zero real
+    cameras. Behavior depends on camera.mock_profile:
+      full          -> everything works, short simulated latency
+      intermittent  -> periodically fails probe/status (reconnect test)
+      limited       -> presets work; Absolute/Relative/Continuous are
+                       reported unsupported
+    """
+
+    def __init__(self, camera: CameraConfig, cfg: AppConfig, logger: logging.Logger):
+        super().__init__(camera, cfg, logger)
+        self._call_count = 0
+        self._last_preset_token = ""
+
+    def _latency(self) -> None:
+        time.sleep(random.uniform(0.05, 0.2))
+
+    def _maybe_fail(self) -> Optional[CommandResult]:
+        if self.camera.mock_profile != MockProfile.INTERMITTENT:
+            return None
+        self._call_count += 1
+        if self._call_count % 4 == 0:
+            return CommandResult(False, FailureCategory.NETWORK, "mock: simulated intermittent disconnect")
+        return None
+
+    def probe(self) -> CommandResult:
+        self._latency()
+        fail = self._maybe_fail()
+        if fail:
+            return fail
+        return CommandResult(True, None, "mock probe ok", {
+            "xaddr": f"http://{self.camera.host}:{self.camera.onvif_port}/onvif/device_service",
+            "auth_method": "ws-usernametoken (simulated)",
+            "clock_skew_s": 0.0,
+        })
+
+    def get_services(self) -> CommandResult:
+        self._latency()
+        services = ["device", "media", "ptz"]
+        if self.camera.mock_profile != MockProfile.LIMITED:
+            services.append("imaging")
+        return CommandResult(True, None, "mock services ok", {"services": services})
+
+    def get_profiles(self) -> CommandResult:
+        self._latency()
+        profile = self.camera.profile_token or "MainStreamProfile"
+        return CommandResult(True, None, "mock profiles ok", {"profiles": [profile], "chosen_profile": profile})
+
+    def get_presets(self) -> CommandResult:
+        self._latency()
+        return CommandResult(True, None, "mock presets ok", {"presets": list(self.camera.presets.keys())})
+
+    def get_status(self) -> CommandResult:
+        self._latency()
+        fail = self._maybe_fail()
+        if fail:
+            return fail
+        limited = self.camera.mock_profile == MockProfile.LIMITED
+        return CommandResult(True, None, "mock status ok", {
+            "position_available": not limited,
+            "move_status_available": not limited,
+            "absolute_move_available": not limited,
+            "relative_move_available": not limited,
+            "continuous_move_available": not limited,
+            "preset_speed_available": False,
+            "last_preset_token": self._last_preset_token,
+        })
+
+    def goto_preset(self, preset_token: str) -> CommandResult:
+        self._latency()
+        fail = self._maybe_fail()
+        if fail:
+            return fail
+        self._last_preset_token = preset_token
+        self.logger.info("mock: goto preset token=%s", preset_token)
+        return CommandResult(True, None, f"mock: moved to preset {preset_token}")
+
+    def move(self, pan: float, tilt: float, zoom: float, move_s: float) -> CommandResult:
+        if self.camera.mock_profile == MockProfile.LIMITED:
+            return CommandResult(False, FailureCategory.UNSUPPORTED, "mock: ContinuousMove not supported on this profile")
+        time.sleep(min(0.3, move_s))  # simulate only a short slice, not the full bounded duration
+        self.logger.info("mock: continuous move pan=%.2f tilt=%.2f zoom=%.2f for %.2fs", pan, tilt, zoom, move_s)
+        return CommandResult(True, None, "mock: move accepted")
+
+    def stop(self) -> CommandResult:
+        self.logger.info("mock: stop")
+        return CommandResult(True, None, "mock: stopped")
+
+    def home(self) -> CommandResult:
+        return self.goto_preset(self.camera.presets.get(self.camera.home_preset, ""))
+
+    def snapshot(self, output_path: Path) -> CommandResult:
+        self._latency()
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if PIL_AVAILABLE:
+                color = {"full": (60, 140, 60), "intermittent": (170, 140, 40),
+                         "limited": (120, 60, 60)}.get(self.camera.mock_profile.value, (90, 90, 90))
+                img = Image.new("RGB", (320, 180), color=color)
+                img.save(output_path, format="PNG")
+            else:
+                output_path.write_text("mock snapshot placeholder (Pillow not installed)", encoding="utf-8")
+            return CommandResult(True, None, "mock snapshot written", {"path": str(output_path)})
+        except Exception as exc:
+            return CommandResult(False, FailureCategory.UNKNOWN, f"mock snapshot failed: {exc}")
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 2401
+
+Building out a large set of utility functions across sections.
+Routing snapshot and probe requests through the worker's command queue.
+bash
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 2451
+
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 13. TKINTER GUI CONSTRUCTION
+# ======================================================================
+
+class PTZPatrolGUI(tk.Tk):
+    """The whole application UI. One window, one class, matching the
+    uploaded sketch: left camera list + manual PTZ pad, upper-right
+    dynamic patrol editor, lower-right 4x2 preview/status grid, bottom
+    status bar with a global Emergency Stop. Nothing in this class
+    ever calls a CameraBridge directly or blocks on network I/O --
+    every action enqueues a command on the target camera's worker and
+    every piece of live status is read back from that worker's plain
+    attributes on the next after()-scheduled poll."""
+
+    def __init__(self, app_config: AppConfig, ini_doc: IniDocument, load_issues: List[ValidationIssue]):
+        super().__init__()
+        self.title(f"{APP_NAME} v{APP_VERSION}")
+        self.geometry("1440x840")
+        self.minsize(1100, 680)
+
+        self.app_config = app_config
+        self.ini_doc = ini_doc
+        self.event_queue: "queue.Queue[WorkerEvent]" = queue.Queue()
+        self.logger = setup_logging(app_config.app.log_level, app_config.app.log_max_bytes, app_config.app.log_backup_count)
+        _redactor.update_from_config(app_config)
+        write_cli_cache(app_config)
+
+        self.worker_manager = WorkerManager(self.event_queue)
+        self.selected_camera_id: Optional[str] = None
+        self._pad_held_direction: Optional[str] = None
+        self._pad_refresh_after_id: Optional[str] = None
+        self._suspend_automation_traces = False
+        self._tile_camera_ids: List[str] = []
+        self._shutting_down = False
+        self._poll_after_id: Optional[str] = None
+        self.last_global_error = ""
+        self.tile_widgets: Dict[int, Dict[str, Any]] = {}
+
+        self.speed_var = tk.DoubleVar(value=app_config.manual_override.manual_speed_default)
+        self.pause_duration_var = tk.StringVar(value=str(app_config.manual_override.default_pause_s))
+        self.automation_enabled_var = tk.BooleanVar(value=False)
+        self.repeat_mode_var = tk.StringVar(value=RepeatMode.FOREVER.value)
+        self.repeat_count_var = tk.StringVar(value="1")
+        self.protocol_var = tk.StringVar(value="ONVIF")
+
+        self._build_gui()
+
+        self.worker_manager.build_workers(self.app_config)
+        self.worker_manager.start_all()
+        self._refresh_camera_tree()
+        self._reload_patrol_editor()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._poll_after_id = self.after(GUI_POLL_MS, self._poll_events)
+
+        if load_issues:
+            self.after(300, lambda: self._show_load_issues(load_issues))
+
+    # ---------------------------------------------------------------
+    # Layout
+    # ---------------------------------------------------------------
+    def _build_gui(self) -> None:
+        main = ttk.Frame(self)
+        main.pack(fill="both", expand=True)
+
+        paned = ttk.PanedWindow(main, orient="horizontal")
+        paned.pack(fill="both", expand=True)
+
+        left = ttk.Frame(paned, width=380)
+        paned.add(left, weight=1)
+
+        right = ttk.PanedWindow(paned, orient="vertical")
+        paned.add(right, weight=3)
+
+        editor_frame = ttk.Frame(right)
+        right.add(editor_frame, weight=2)
+        preview_frame = ttk.Frame(right)
+        right.add(preview_frame, weight=1)
+
+        self._build_left_panel(left)
+        self._build_patrol_editor(editor_frame)
+        self._build_preview_grid(preview_frame)
+        self._build_status_bar(main)
+
+    def _build_left_panel(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Cameras", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", padx=6, pady=(6, 2))
+
+        tree_frame = ttk.Frame(parent)
+        tree_frame.pack(fill="both", expand=False, padx=6)
+        columns = ("en", "id", "name", "host", "state")
+        self.camera_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8, selectmode="browse")
+        for col, label, width in (("en", "On", 30), ("id", "ID", 90), ("name", "Name", 100),
+                                   ("host", "Host:Port", 130), ("state", "State", 110)):
+            self.camera_tree.heading(col, text=label)
+            self.camera_tree.column(col, width=width, anchor="w")
+        self.camera_tree.pack(side="left", fill="both", expand=True)
+        tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.camera_tree.yview)
+        self.camera_tree.configure(yscrollcommand=tree_scroll.set)
+        tree_scroll.pack(side="right", fill="y")
+        self.camera_tree.bind("<<TreeviewSelect>>", self._on_camera_selected)
+
+        btns = ttk.Frame(parent)
+        btns.pack(fill="x", padx=6, pady=4)
+        ttk.Button(btns, text="Add", command=self._on_add_camera).pack(side="left", padx=2)
+        ttk.Button(btns, text="Discover", command=self._on_discover).pack(side="left", padx=2)
+        ttk.Button(btns, text="Delete", command=self._on_delete_camera).pack(side="left", padx=2)
+        ttk.Button(btns, text="Probe", command=self._on_probe).pack(side="left", padx=2)
+        ttk.Button(btns, text="Save", command=self._on_save_config).pack(side="left", padx=2)
+
+        proto_frame = ttk.Frame(parent)
+        proto_frame.pack(fill="x", padx=6, pady=(0, 6))
+        ttk.Label(proto_frame, text="Protocol:").pack(side="left")
+        ttk.Combobox(proto_frame, textvariable=self.protocol_var, values=["ONVIF"], state="readonly", width=10).pack(side="left", padx=4)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=6, pady=6)
+        ttk.Label(parent, text="Manual PTZ (selected camera)", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", padx=6)
+
+        pad = ttk.Frame(parent)
+        pad.pack(pady=8)
+        up = ttk.Button(pad, text="\u25B2", width=4)
+        up.grid(row=0, column=1)
+        left_b = ttk.Button(pad, text="\u25C0", width=4)
+        left_b.grid(row=1, column=0)
+        stop_b = ttk.Button(pad, text="STOP", width=8, command=self._on_pad_stop)
+        stop_b.grid(row=1, column=1, padx=2)
+        right_b = ttk.Button(pad, text="\u25B6", width=4)
+        right_b.grid(row=1, column=2)
+        down = ttk.Button(pad, text="\u25BC", width=4)
+        down.grid(row=2, column=1)
+
+        for btn, direction in ((up, "up"), (down, "down"), (left_b, "left"), (right_b, "right")):
+            btn.bind("<ButtonPress-1>", lambda e, d=direction: self._on_pad_press(d))
+            btn.bind("<ButtonRelease-1>", self._on_pad_release)
+            btn.bind("<Leave>", self._on_pad_leave)
+            btn.bind("<FocusOut>", self._on_pad_leave)
+
+        ttk.Button(parent, text="Home", command=self._on_home_clicked).pack(pady=(4, 6))
+
+        speed_frame = ttk.Frame(parent)
+        speed_frame.pack(fill="x", padx=6, pady=(0, 10))
+        ttk.Label(speed_frame, text="Speed").pack(side="left")
+        ttk.Scale(speed_frame, from_=0.05, to=1.0, variable=self.speed_var, orient="horizontal").pack(
+            side="left", fill="x", expand=True, padx=6)
+
+    def _build_patrol_editor(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Patrol Editor", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", padx=6, pady=(4, 2))
+
+        rows_container = ttk.Frame(parent)
+        rows_container.pack(fill="both", expand=True, padx=(6, 0))
+        canvas = tk.Canvas(rows_container, highlightthickness=0)
+        vscroll = ttk.Scrollbar(rows_container, orient="vertical", command=canvas.yview)
+        self.patrol_rows_frame = ttk.Frame(canvas)
+        self.patrol_rows_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=self.patrol_rows_frame, anchor="nw")
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vscroll.pack(side="right", fill="y")
+
+        toolbar1 = ttk.Frame(parent)
+        toolbar1.pack(fill="x", padx=6, pady=4)
+        ttk.Button(toolbar1, text="Add Step", command=self._add_step).pack(side="left", padx=2)
+        ttk.Checkbutton(toolbar1, text="Enable Automation", variable=self.automation_enabled_var,
+                        command=self._on_toggle_automation).pack(side="left", padx=10)
+        ttk.Radiobutton(toolbar1, text="Repeat Forever", variable=self.repeat_mode_var,
+                        value=RepeatMode.FOREVER.value, command=self._on_repeat_mode_changed).pack(side="left")
+        ttk.Radiobutton(toolbar1, text="Fixed count:", variable=self.repeat_mode_var,
+                        value=RepeatMode.FIXED_COUNT.value, command=self._on_repeat_mode_changed).pack(side="left")
+        count_entry = ttk.Entry(toolbar1, textvariable=self.repeat_count_var, width=4)
+        count_entry.pack(side="left", padx=2)
+        self.repeat_count_var.trace_add("write", self._on_repeat_count_changed)
+
+        toolbar2 = ttk.Frame(parent)
+        toolbar2.pack(fill="x", padx=6, pady=(0, 8))
+        ttk.Button(toolbar2, text="Test One Cycle", command=self._on_test_one_cycle).pack(side="left", padx=2)
+        ttk.Button(toolbar2, text="Start", command=self._on_start_clicked).pack(side="left", padx=2)
+        ttk.Label(toolbar2, text="Pause (s, 0=indefinite):").pack(side="left", padx=(10, 2))
+        self.pause_duration_combo = ttk.Combobox(
+            toolbar2, textvariable=self.pause_duration_var, width=8, state="readonly",
+            values=[str(x) for x in self.app_config.manual_override.pause_options_s])
+        self.pause_duration_combo.pack(side="left")
+        ttk.Button(toolbar2, text="Pause", command=self._on_pause_clicked).pack(side="left", padx=2)
+        ttk.Button(toolbar2, text="Resume", command=self._on_resume_clicked).pack(side="left", padx=2)
+        ttk.Button(toolbar2, text="Stop", command=self._on_stop_clicked).pack(side="left", padx=2)
+        ttk.Button(toolbar2, text="Return Home", command=self._on_return_home_clicked).pack(side="left", padx=2)
+        ttk.Button(toolbar2, text="Save Configuration", command=self._on_save_config).pack(side="left", padx=14)
+
+    def _build_preview_grid(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Camera Status / Preview", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", padx=6, pady=(4, 2))
+        grid = tk.Frame(parent)
+        grid.pack(fill="both", expand=True, padx=4, pady=4)
+        for i in range(MAX_PREVIEW_TILES):
+            r, c = divmod(i, 4)
+            grid.columnconfigure(c, weight=1)
+            grid.rowconfigure(r, weight=1)
+            tile = tk.Frame(grid, borderwidth=1, relief="solid", bg="#eeeeee")
+            tile.grid(row=r, column=c, padx=3, pady=3, sticky="nsew")
+            name_lbl = tk.Label(tile, text="(empty)", font=("TkDefaultFont", 9, "bold"), bg="#eeeeee", anchor="w")
+            name_lbl.pack(fill="x", padx=4, pady=(2, 0))
+            image_lbl = tk.Label(tile, bg="#eeeeee")
+            image_lbl.pack()
+            state_lbl = tk.Label(tile, text="", font=("TkDefaultFont", 8), bg="#eeeeee", anchor="w")
+            state_lbl.pack(fill="x", padx=4)
+            step_lbl = tk.Label(tile, text="", font=("TkDefaultFont", 8), bg="#eeeeee", anchor="w")
+            step_lbl.pack(fill="x", padx=4)
+            countdown_lbl = tk.Label(tile, text="", font=("TkDefaultFont", 8), bg="#eeeeee", anchor="w")
+            countdown_lbl.pack(fill="x", padx=4, pady=(0, 2))
+            for w in (tile, name_lbl, image_lbl, state_lbl, step_lbl, countdown_lbl):
+                w.bind("<Button-1>", lambda e, idx=i: self._on_tile_clicked(idx))
+            self.tile_widgets[i] = {"frame": tile, "name": name_lbl, "image": image_lbl,
+                                     "state": state_lbl, "step": step_lbl, "countdown": countdown_lbl, "photo": None}
+
+    def _build_status_bar(self, parent: ttk.Frame) -> None:
+        bar = ttk.Frame(parent, relief="sunken")
+        bar.pack(fill="x", side="bottom")
+        self.status_counts_label = ttk.Label(bar, text="Enabled: 0  Connected: 0  Running: 0  Paused: 0  Offline: 0")
+        self.status_counts_label.pack(side="left", padx=8, pady=4)
+        self.status_mode_label = ttk.Label(bar, text="")
+        self.status_mode_label.pack(side="left", padx=8)
+        self.status_error_label = ttk.Label(bar, text="", foreground="#b00020")
+        self.status_error_label.pack(side="left", padx=8, fill="x", expand=True)
+        estop = tk.Button(bar, text="EMERGENCY STOP", bg="#c0392b", fg="white", activebackground="#a93226",
+                           font=("TkDefaultFont", 10, "bold"), command=self._on_emergency_stop)
+        estop.pack(side="right", padx=10, pady=4, ipadx=10, ipady=6)
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 2676
+
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+    # ---------------------------------------------------------------
+    # Patrol editor: row (re)building
+    # ---------------------------------------------------------------
+    def _current_editor_patrol(self) -> Optional[Patrol]:
+        if not self.selected_camera_id:
+            return None
+        cam = self.app_config.cameras.get(self.selected_camera_id)
+        if cam is None or not cam.patrol_name:
+            return None
+        return self.app_config.patrols.get(cam.patrol_name)
+
+    def _reload_patrol_editor(self) -> None:
+        patrol = self._current_editor_patrol()
+        self._suspend_automation_traces = True
+        if patrol is not None:
+            self.automation_enabled_var.set(patrol.enabled)
+            self.repeat_mode_var.set(patrol.repeat_mode.value)
+            self.repeat_count_var.set(str(patrol.repeat_count))
+        else:
+            self.automation_enabled_var.set(False)
+            self.repeat_mode_var.set(RepeatMode.FOREVER.value)
+            self.repeat_count_var.set("1")
+        self._suspend_automation_traces = False
+        self._rebuild_patrol_rows()
+
+    def _rebuild_patrol_rows(self) -> None:
+        for child in self.patrol_rows_frame.winfo_children():
+            child.destroy()
+        patrol = self._current_editor_patrol()
+        if patrol is None:
+            ttk.Label(self.patrol_rows_frame,
+                      text="(select a camera with a patrol assigned, or use Add to create one)").grid(
+                row=0, column=0, sticky="w", padx=4, pady=4)
+            return
+
+        headers = ["#", "On", "Action", "Target", "Pan", "Tilt", "Zoom", "Move s", "Settle s", "Dwell s", "Row"]
+        for c, h in enumerate(headers):
+            ttk.Label(self.patrol_rows_frame, text=h, font=("TkDefaultFont", 9, "bold")).grid(
+                row=0, column=c, padx=3, pady=(0, 4), sticky="w")
+
+        for i, step in enumerate(patrol.steps):
+            r = i + 1
+            ttk.Label(self.patrol_rows_frame, text=str(i + 1)).grid(row=r, column=0, padx=3)
+
+            en_var = tk.BooleanVar(value=step.enabled)
+            ttk.Checkbutton(self.patrol_rows_frame, variable=en_var,
+                            command=lambda s=step, v=en_var: setattr(s, "enabled", v.get())).grid(row=r, column=1)
+
+            action_var = tk.StringVar(value=step.action.value)
+            action_cb = ttk.Combobox(self.patrol_rows_frame, textvariable=action_var, width=14, state="readonly",
+                                      values=[a.value for a in StepAction])
+            action_cb.grid(row=r, column=2, padx=2)
+            action_cb.bind("<<ComboboxSelected>>", lambda e, s=step, v=action_var: setattr(s, "action", StepAction(v.get())))
+
+            target_var = tk.StringVar(value=step.target)
+            ttk.Entry(self.patrol_rows_frame, textvariable=target_var, width=9).grid(row=r, column=3, padx=2)
+            target_var.trace_add("write", lambda *a, s=step, v=target_var: setattr(s, "target", v.get()))
+
+            def make_float_var(initial: float) -> tk.StringVar:
+                return tk.StringVar(value=f"{initial:.2f}")
+
+            pan_var = make_float_var(step.pan)
+            tilt_var = make_float_var(step.tilt)
+            zoom_var = make_float_var(step.zoom)
+            move_var = tk.StringVar(value=f"{step.move_s:.1f}")
+            settle_var = tk.StringVar(value=f"{step.settle_s:.1f}")
+            dwell_var = tk.StringVar(value=f"{step.dwell_s:.1f}")
+
+            def bind_float(var: tk.StringVar, step_ref: PatrolStep, attr: str, lo: float, hi: float) -> None:
+                def _cb(*_a: Any) -> None:
+                    v = _pfloat(var.get())
+                    if v is not None:
+                        setattr(step_ref, attr, max(lo, min(hi, v)))
+                var.trace_add("write", _cb)
+
+            specs = ((pan_var, "pan", -1.0, 1.0, 4), (tilt_var, "tilt", -1.0, 1.0, 5), (zoom_var, "zoom", -1.0, 1.0, 6),
+                     (move_var, "move_s", 0.0, MAX_CONTINUOUS_MOVE_S, 7), (settle_var, "settle_s", 0.0, MAX_DWELL_S, 8),
+                     (dwell_var, "dwell_s", 0.0, MAX_DWELL_S, 9))
+            for var, attr, lo, hi, col in specs:
+                bind_float(var, step, attr, lo, hi)
+                ttk.Entry(self.patrol_rows_frame, textvariable=var, width=6).grid(row=r, column=col, padx=1)
+
+            rowbtns = ttk.Frame(self.patrol_rows_frame)
+            rowbtns.grid(row=r, column=10, padx=4)
+            ttk.Button(rowbtns, text="^", width=2, command=lambda idx=i: self._move_step(idx, -1)).pack(side="left")
+            ttk.Button(rowbtns, text="v", width=2, command=lambda idx=i: self._move_step(idx, 1)).pack(side="left")
+            ttk.Button(rowbtns, text="Dup", width=4, command=lambda idx=i: self._duplicate_step(idx)).pack(side="left")
+            ttk.Button(rowbtns, text="Del", width=4, command=lambda idx=i: self._delete_step(idx)).pack(side="left")
+
+    def _add_step(self) -> None:
+        patrol = self._current_editor_patrol()
+        if patrol is None:
+            messagebox.showinfo(APP_NAME, "Select a camera with a patrol assigned first (Add Camera creates one).")
+            return
+        patrol.steps.append(PatrolStep(action=StepAction.GOTO_PRESET, settle_s=1.0, dwell_s=5.0))
+        self._rebuild_patrol_rows()
+
+    def _move_step(self, idx: int, delta: int) -> None:
+        patrol = self._current_editor_patrol()
+        if patrol is None:
+            return
+        new_idx = idx + delta
+        if 0 <= new_idx < len(patrol.steps):
+            patrol.steps[idx], patrol.steps[new_idx] = patrol.steps[new_idx], patrol.steps[idx]
+            self._rebuild_patrol_rows()
+
+    def _duplicate_step(self, idx: int) -> None:
+        patrol = self._current_editor_patrol()
+        if patrol is None:
+            return
+        patrol.steps.insert(idx + 1, copy.deepcopy(patrol.steps[idx]))
+        self._rebuild_patrol_rows()
+
+    def _delete_step(self, idx: int) -> None:
+        patrol = self._current_editor_patrol()
+        if patrol is None:
+            return
+        del patrol.steps[idx]
+        self._rebuild_patrol_rows()
+
+    def _on_toggle_automation(self) -> None:
+        if self._suspend_automation_traces:
+            return
+        patrol = self._current_editor_patrol()
+        if patrol is not None:
+            patrol.enabled = self.automation_enabled_var.get()
+
+    def _on_repeat_mode_changed(self) -> None:
+        if self._suspend_automation_traces:
+            return
+        patrol = self._current_editor_patrol()
+        if patrol is not None:
+            try:
+                patrol.repeat_mode = RepeatMode(self.repeat_mode_var.get())
+            except ValueError:
+                pass
+
+    def _on_repeat_count_changed(self, *_args: Any) -> None:
+        if self._suspend_automation_traces:
+            return
+        patrol = self._current_editor_patrol()
+        if patrol is not None:
+            v = _pint(self.repeat_count_var.get())
+            if v and v > 0:
+                patrol.repeat_count = v
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 2822
+
+Building PTZ controls with start, pause, and stop handling.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+    # ---------------------------------------------------------------
+    # 14. GUI CALLBACKS
+    # ---------------------------------------------------------------
+    def _selected_worker(self) -> Optional[CameraWorker]:
+        if not self.selected_camera_id:
+            return None
+        return self.worker_manager.get_worker(self.selected_camera_id)
+
+    # -- manual PTZ pad: press-and-hold with dead-man protection --
+    def _pad_vector(self, direction: str) -> Tuple[float, float, float]:
+        speed = float(self.speed_var.get())
+        return {"up": (0.0, speed, 0.0), "down": (0.0, -speed, 0.0),
+                "left": (-speed, 0.0, 0.0), "right": (speed, 0.0, 0.0)}[direction]
+
+    def _send_manual_move(self, worker: CameraWorker, direction: str) -> None:
+        pan, tilt, zoom = self._pad_vector(direction)
+        worker.enqueue(CommandType.MANUAL_MOVE, {
+            "pan": pan, "tilt": tilt, "zoom": zoom,
+            "override_pause_s": self.app_config.manual_override.default_pause_s,
+        })
+
+    def _on_pad_press(self, direction: str) -> None:
+        worker = self._selected_worker()
+        if worker is None:
+            return
+        self._pad_held_direction = direction
+        self._send_manual_move(worker, direction)
+        self._schedule_pad_refresh()
+
+    def _schedule_pad_refresh(self) -> None:
+        self._cancel_pad_refresh()
+        self._pad_refresh_after_id = self.after(int(MANUAL_MOVE_CHUNK_S * 1000 * 0.7), self._pad_refresh_tick)
+
+    def _pad_refresh_tick(self) -> None:
+        if self._pad_held_direction is None:
+            return
+        worker = self._selected_worker()
+        if worker is not None:
+            self._send_manual_move(worker, self._pad_held_direction)
+        self._schedule_pad_refresh()
+
+    def _cancel_pad_refresh(self) -> None:
+        if self._pad_refresh_after_id is not None:
+            try:
+                self.after_cancel(self._pad_refresh_after_id)
+            except Exception:
+                pass
+            self._pad_refresh_after_id = None
+
+    def _on_pad_release(self, _event: Any = None) -> None:
+        self._pad_held_direction = None
+        self._cancel_pad_refresh()
+        worker = self._selected_worker()
+        if worker is not None:
+            worker.enqueue(CommandType.MANUAL_STOP)
+
+    def _on_pad_leave(self, _event: Any = None) -> None:
+        if self._pad_held_direction is not None:
+            self._on_pad_release()
+
+    def _on_pad_stop(self) -> None:
+        self._on_pad_release()
+
+    def _on_home_clicked(self) -> None:
+        worker = self._selected_worker()
+        if worker is None:
+            messagebox.showinfo(APP_NAME, "Select a camera first.")
+            return
+        worker.enqueue(CommandType.HOME)
+
+    # -- patrol run controls --
+    def _on_start_clicked(self) -> None:
+        worker = self._selected_worker()
+        if worker is None:
+            messagebox.showinfo(APP_NAME, "Select a camera first.")
+            return
+        worker.patrol_running = True
+        worker.enqueue(CommandType.RESUME)
+
+    def _on_pause_clicked(self) -> None:
+        worker = self._selected_worker()
+        if worker is None:
+            return
+        pause_s = _pint(self.pause_duration_var.get()) or 0
+        worker.enqueue(CommandType.PAUSE, {"pause_s": pause_s})
+
+    def _on_resume_clicked(self) -> None:
+        worker = self._selected_worker()
+        if worker is not None:
+            worker.enqueue(CommandType.RESUME)
+
+    def _on_stop_clicked(self) -> None:
+        worker = self._selected_worker()
+        if worker is None:
+            return
+        worker.patrol_running = False
+        worker.enqueue(CommandType.MANUAL_STOP)
+
+    def _on_return_home_clicked(self) -> None:
+        worker = self._selected_worker()
+        if worker is not None:
+            worker.enqueue(CommandType.HOME)
+
+    def _on_test_one_cycle(self) -> None:
+        worker = self._selected_worker()
+        if worker is None:
+            messagebox.showinfo(APP_NAME, "Select a camera first.")
+            return
+        if not self.app_config.app.dry_run and not messagebox.askyesno(
+                APP_NAME, f"This will move camera '{worker.camera.id}' through one full patrol "
+                          f"cycle now (dry_run is OFF). Continue?"):
+            return
+        worker.step_index = 0
+        worker.cycle_count = 0
+        worker.one_shot_cycle_limit = 1
+        worker.patrol_running = True
+        worker.enqueue(CommandType.RESUME)
+
+    # -- camera list actions --
+    def _on_camera_selected(self, _event: Any = None) -> None:
+        sel = self.camera_tree.selection()
+        if sel:
+            self._select_camera(sel[0])
+
+    def _select_camera(self, cam_id: str) -> None:
+        if cam_id == self.selected_camera_id:
+            return
+        self.selected_camera_id = cam_id
+        try:
+            self.camera_tree.selection_set(cam_id)
+        except Exception:
+            pass
+        self._reload_patrol_editor()
+
+    def _on_tile_clicked(self, idx: int) -> None:
+        if idx >= len(self._tile_camera_ids):
+            return
+        cam_id = self._tile_camera_ids[idx]
+        self._select_camera(cam_id)
+        if self.app_config.preview.mode != PreviewMode.OFF:
+            worker = self.worker_manager.get_worker(cam_id)
+            if worker is not None:
+                ensure_app_dirs()
+                request_snapshot(worker, DIAGNOSTICS_DIR / f"preview_{cam_id}.png")
+
+    def _on_add_camera(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("Add Camera")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        def row(label: str, default: str = "") -> tk.StringVar:
+            f = ttk.Frame(dlg)
+            f.pack(fill="x", padx=8, pady=3)
+            ttk.Label(f, text=label, width=20).pack(side="left")
+            var = tk.StringVar(value=default)
+            ttk.Entry(f, textvariable=var, width=28).pack(side="left", fill="x", expand=True)
+            return var
+
+        id_var = row("Stable ID (a-z,0-9,_)")
+        name_var = row("Display name")
+        host_var = row("Host / IP", "192.168.1.100")
+        port_var = row("ONVIF port", "8899")
+        user_var = row("Username", "ptzuser")
+        pass_var = row("Password", "CHANGE_ME")
+        presets_var = row("Presets (alias,alias,...)", "MAIN,LEFT,RIGHT")
+
+        def on_ok() -> None:
+            cam_id = re.sub(r"[^a-zA-Z0-9_]", "_", id_var.get().strip())
+            if not cam_id:
+                messagebox.showerror(APP_NAME, "A stable ID is required.", parent=dlg)
+                return
+            if cam_id in self.app_config.cameras:
+                messagebox.showerror(APP_NAME, f"Camera id '{cam_id}' already exists.", parent=dlg)
+                return
+            port = _pint(port_var.get()) or 8899
+            aliases = [a.strip() for a in presets_var.get().split(",") if a.strip()]
+            presets = {alias: str(i + 1) for i, alias in enumerate(aliases)}
+            patrol_name = f"{cam_id}_patrol"
+            cam = CameraConfig(id=cam_id, name=name_var.get().strip() or cam_id, host=host_var.get().strip(),
+                                onvif_port=port, username=user_var.get().strip(), password=pass_var.get(),
+                                patrol_name=patrol_name, home_preset=(aliases[0] if aliases else ""),
+                                presets=presets)
+            self.app_config.cameras[cam_id] = cam
+            self.app_config.patrols[patrol_name] = Patrol(name=patrol_name, steps=[])
+            dlg.destroy()
+            self._refresh_camera_tree()
+            self._select_camera(cam_id)
+            messagebox.showinfo(APP_NAME, "Camera added in memory. Click Save to write config.txt and start its worker.")
+
+        btnrow = ttk.Frame(dlg)
+        btnrow.pack(fill="x", padx=8, pady=8)
+        ttk.Button(btnrow, text="Add", command=on_ok).pack(side="right", padx=4)
+        ttk.Button(btnrow, text="Cancel", command=dlg.destroy).pack(side="right")
+
+    def _on_delete_camera(self) -> None:
+        if not self.selected_camera_id:
+            messagebox.showinfo(APP_NAME, "Select a camera first.")
+            return
+        cam_id = self.selected_camera_id
+        if not messagebox.askyesno(APP_NAME, f"Delete camera '{cam_id}'? This cannot be undone once saved."):
+            return
+        cam = self.app_config.cameras.pop(cam_id, None)
+        if cam is not None and cam.patrol_name:
+            still_used = any(c.patrol_name == cam.patrol_name for c in self.app_config.cameras.values())
+            if not still_used:
+                self.app_config.patrols.pop(cam.patrol_name, None)
+        self.selected_camera_id = None
+        self._refresh_camera_tree()
+        self._reload_patrol_editor()
+        messagebox.showinfo(APP_NAME, "Camera removed in memory. Click Save to write config.txt and stop its worker.")
+
+    def _on_discover(self) -> None:
+        messagebox.showinfo(
+            APP_NAME,
+            "Live ONVIF WS-Discovery is not implemented in this compact version -- no CLI syntax for it has "
+            "been verified yet, and this build does not invent one.\n\n"
+            "Add cameras manually with the Add button, then use Probe (once [CLI] is configured in config.txt) "
+            "to confirm what that camera actually supports before relying on it.")
+
+    def _on_probe(self) -> None:
+        worker = self._selected_worker()
+        if worker is None:
+            messagebox.showinfo(APP_NAME, "Select a camera first.")
+            return
+        request_probe(worker)
+        messagebox.showinfo(APP_NAME, f"Capability probe queued for '{worker.camera.id}'. "
+                                       f"A summary will pop up when it completes; the full report is "
+                                       f"saved under diagnostics/.")
+
+    def _on_save_config(self) -> None:
+        self.worker_manager.stop_all(join=True, timeout_s=self.app_config.shutdown.worker_join_timeout_s)
+        ok, errors = save_config(CONFIG_PATH, self.ini_doc, self.app_config)
+        if not ok:
+            messagebox.showerror(APP_NAME, "Save failed -- config.txt was NOT changed:\n\n" + "\n".join(errors))
+            self.worker_manager.build_workers(self.app_config)
+            self.worker_manager.start_all()
+            return
+        self.app_config, self.ini_doc, issues = load_config(CONFIG_PATH)
+        _redactor.update_from_config(self.app_config)
+        write_cli_cache(self.app_config)
+        self.worker_manager.build_workers(self.app_config)
+        self.worker_manager.start_all()
+        self._refresh_camera_tree()
+        self._reload_patrol_editor()
+        warnings = [i for i in issues if i.severity == "warning"]
+        msg = "Configuration saved."
+        if warnings:
+            msg += "\n\nWarnings:\n" + "\n".join(str(i) for i in warnings[:8])
+        messagebox.showinfo(APP_NAME, msg)
+
+    def _on_emergency_stop(self) -> None:
+        self.worker_manager.emergency_stop_all()
+        self.last_global_error = "EMERGENCY STOP pressed"
+        self.logger.warning("EMERGENCY STOP pressed by operator")
+
+    def _show_load_issues(self, issues: List[ValidationIssue]) -> None:
+        errors = [i for i in issues if i.severity == "error"]
+        warnings = [i for i in issues if i.severity == "warning"]
+        lines = []
+        if errors:
+            lines.append(f"{len(errors)} error(s) -- affected camera/patrol/step(s) were skipped:")
+            lines.extend(f"  {e}" for e in errors[:10])
+        if warnings:
+            lines.append(f"{len(warnings)} warning(s):")
+            lines.extend(f"  {w}" for w in warnings[:10])
+        messagebox.showwarning(APP_NAME, "config.txt loaded with issues:\n\n" + "\n".join(lines))
+
+    # ---------------------------------------------------------------
+    # Event queue draining / live refresh (root.after loop)
+    # ---------------------------------------------------------------
+    def _poll_events(self) -> None:
+        drained = 0
+        while drained < 300:
+            try:
+                evt = self.event_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._handle_worker_event(evt)
+            drained += 1
+
+        if STOP_REQUEST_FILE.exists():
+            try:
+                STOP_REQUEST_FILE.unlink()
+            except Exception:
+                pass
+            self._on_close()
+            return
+
+        self._refresh_camera_tree()
+        self._refresh_preview_tiles()
+        self._refresh_status_bar()
+
+        if not self._shutting_down:
+            self._poll_after_id = self.after(GUI_POLL_MS, self._poll_events)
+
+    def _handle_worker_event(self, evt: WorkerEvent) -> None:
+        if evt.event_type == "ERROR":
+            self.last_global_error = f"{evt.camera_id}: {evt.payload.get('message', '')}"
+        elif evt.event_type == "PROBE_DONE":
+            tier = evt.payload.get("recommended_tier", "unknown")
+            warn = evt.payload.get("warnings", [])
+            msg = f"Capability probe for '{evt.camera_id}' complete.\nRecommended tier: {tier}\n"
+            if warn:
+                msg += "\nWarnings:\n- " + "\n- ".join(warn)
+            msg += f"\n\nSaved to:\n{evt.payload.get('txt_path', '')}"
+            messagebox.showinfo(APP_NAME, msg)
+        elif evt.event_type == "SNAPSHOT" and evt.payload.get("ok"):
+            path = Path(evt.payload.get("path", ""))
+            for idx, cam_id in enumerate(self._tile_camera_ids):
+                if cam_id == evt.camera_id:
+                    photo = load_tile_image(path, self.app_config.preview.tile_width_px)
+                    if photo is not None:
+                        self.tile_widgets[idx]["image"].configure(image=photo)
+                        self.tile_widgets[idx]["photo"] = photo  # keep a strong reference
+                    break
+        # STATE / STEP / COUNTDOWN / LOG: no per-event handling needed --
+        # the worker keeps its own state/last_step_label/countdown_s
+        # attributes current, and the refresh methods below read those
+        # directly on every poll tick.
+
+    def _refresh_camera_tree(self) -> None:
+        existing = set(self.camera_tree.get_children())
+        wanted = set(self.app_config.cameras.keys())
+        for iid in existing - wanted:
+            self.camera_tree.delete(iid)
+        for cam_id, cam in self.app_config.cameras.items():
+            worker = self.worker_manager.get_worker(cam_id)
+            state_text = worker.state.value if worker else ("enabled, not started" if cam.enabled else "disabled")
+            values = ("Y" if cam.enabled else "N", cam.id, cam.name, f"{cam.host}:{cam.onvif_port}", state_text)
+            if cam_id in existing:
+                self.camera_tree.item(cam_id, values=values)
+            else:
+                self.camera_tree.insert("", "end", iid=cam_id, values=values)
+        if self.selected_camera_id and self.selected_camera_id in self.app_config.cameras:
+            try:
+                if self.camera_tree.selection() != (self.selected_camera_id,):
+                    self.camera_tree.selection_set(self.selected_camera_id)
+            except Exception:
+                pass
+
+    def _state_color(self, worker: Optional[CameraWorker]) -> str:
+        if worker is None:
+            return "#d0d0d0"
+        if worker.state == CameraState.ERROR:
+            return "#f2b3ab"
+        if worker.state in (CameraState.DISCONNECTED, CameraState.RECOVERING, CameraState.CONNECTING):
+            return "#f7d9a0"
+        if worker.state in (CameraState.PAUSED, CameraState.MANUAL_OVERRIDE):
+            return "#dcdcf2"
+        if worker.state in (CameraState.MOVING, CameraState.SETTLING, CameraState.DWELLING):
+            return "#cdeccd"
+        return "#eeeeee"
+
+    def _refresh_preview_tiles(self) -> None:
+        cam_ids = list(self.app_config.cameras.keys())[:MAX_PREVIEW_TILES]
+        self._tile_camera_ids = cam_ids
+        for i in range(MAX_PREVIEW_TILES):
+            w = self.tile_widgets[i]
+            if i < len(cam_ids):
+                cam_id = cam_ids[i]
+                cam = self.app_config.cameras[cam_id]
+                worker = self.worker_manager.get_worker(cam_id)
+                color = self._state_color(worker)
+                w["frame"].configure(bg=color)
+                w["name"].configure(text=cam.name or cam.id, bg=color)
+                w["state"].configure(text=(worker.state.value if worker else "n/a"), bg=color)
+                w["step"].configure(text=(worker.last_step_label if worker else ""), bg=color)
+                countdown = f"next in {worker.countdown_s:0.0f}s" if worker and worker.countdown_s > 0 else ""
+                w["countdown"].configure(text=countdown, bg=color)
+                w["image"].configure(bg=color)
+            else:
+                w["frame"].configure(bg="#e0e0e0")
+                w["name"].configure(text="(empty)", bg="#e0e0e0")
+                for key in ("state", "step", "countdown", "image"):
+                    w[key].configure(bg="#e0e0e0")
+                    if key != "image":
+                        w[key].configure(text="")
+
+    def _mode_text(self) -> str:
+        a = self.app_config.app
+        return f"MODE: {'MOCK' if a.mock_mode else 'LIVE'}  |  {'DRY-RUN' if a.dry_run else 'ARMED'}"
+
+    def _refresh_status_bar(self) -> None:
+        counts = self.worker_manager.status_counts()
+        self.status_counts_label.config(
+            text=f"Enabled: {counts['enabled']}  Connected: {counts['connected']}  "
+                 f"Running: {counts['running']}  Paused: {counts['paused']}  Offline: {counts['offline']}")
+        warn = ""
+        if (self.app_config.security.credential_backend == CredentialBackendKind.PLAINTEXT
+                and self.app_config.security.warn_plaintext):
+            warn = "  |  WARNING: plaintext credentials stored in config.txt"
+        self.status_mode_label.config(text=self._mode_text() + warn)
+        self.status_error_label.config(text=(f"Last error: {self.last_global_error}" if self.last_global_error else ""))
+
+    # ---------------------------------------------------------------
+    # 15. GRACEFUL SHUTDOWN
+    # ---------------------------------------------------------------
+    def _on_close(self) -> None:
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        try:
+            if self._poll_after_id is not None:
+                self.after_cancel(self._poll_after_id)
+        except Exception:
+            pass
+        self._cancel_pad_refresh()
+
+        self.logger.info("shutdown requested: stopping all camera workers")
+        try:
+            self.worker_manager.stop_all(join=True, timeout_s=self.app_config.shutdown.worker_join_timeout_s)
+        except Exception:
+            self.logger.error("error while stopping workers: %s", traceback.format_exc())
+
+        try:
+            state = {
+                "shutdown_at": datetime.now(timezone.utc).isoformat(),
+                "cameras": {
+                    cam_id: {"state": w.state.value, "step_index": w.step_index, "cycle_count": w.cycle_count}
+                    for cam_id, w in self.worker_manager.workers.items()
+                },
+            }
+            ensure_app_dirs()
+            STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        except Exception:
+            self.logger.error("error while writing runtime/state.json: %s", traceback.format_exc())
+
+        for f in (PID_FILE, STOP_REQUEST_FILE):
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        self.logger.info("shutdown complete")
+        try:
+            self.destroy()
+        except Exception:
+            pass
+PYEOF
+python3 -c "
+import ast
+src = open('/home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py').read()
+ast.parse(src)
+print('syntax OK, lines:', len(src.splitlines()))
+"
+Output
+syntax OK, lines: 3262
+
+Building a large Python program with a complete class structure.
+Adding single-instance checks and a headless diagnostic routine.
+Checking camera connectivity and assembling the diagnostics report.
+Wiring up command-line entry points and startup error handling.
+bash
+cat >> /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py << 'PYEOF'
+
+
+# ======================================================================
+# 16. main()
+# ======================================================================
+
+def _is_process_running(pid: int) -> bool:
+    if not IS_WINDOWS:
+        try:
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            return False
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True, timeout=5)
+        return str(pid) in out.stdout
+    except Exception:
+        return True  # can't verify -> assume running, refuse to risk a double-launch
+
+
+def _single_instance_guard() -> bool:
+    """Returns True if this process may proceed (and writes PID_FILE).
+    Shows a plain messagebox (no full GUI needed yet) if another
+    instance appears to already be running."""
+    ensure_app_dirs()
+    if PID_FILE.exists():
+        try:
+            existing_pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+        except Exception:
+            existing_pid = -1
+        if existing_pid > 0 and _is_process_running(existing_pid):
+            try:
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showerror(APP_NAME, f"{APP_NAME} appears to already be running (PID {existing_pid}).\n"
+                                                f"Close it first, or delete runtime\\app.pid if this is stale.")
+                root.destroy()
+            except Exception:
+                print(f"{APP_NAME} appears to already be running (PID {existing_pid}).", file=sys.stderr)
+            return False
+    PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    return True
+
+
+def run_diagnose(cfg: AppConfig, issues: List[ValidationIssue]) -> int:
+    """Headless diagnostic pass used by `ptz_commands.bat diagnose` and
+    `python ptz_patrol_gui.py --diagnose`. Never opens the GUI and
+    never moves a camera -- config validation plus a plain TCP
+    reachability check only (no credentials used)."""
+    ensure_app_dirs()
+    diag_logger = setup_diagnostics_logger()
+    lines = [f"{APP_NAME} v{APP_VERSION} diagnostics", f"Generated: {datetime.now().isoformat()}",
+             f"Python: {sys.version.split()[0]} on {platform.platform()}", "-" * 60]
+
+    errors = [i for i in issues if i.severity == "error"]
+    warnings = [i for i in issues if i.severity == "warning"]
+    lines.append(f"config.txt: {len(errors)} error(s), {len(warnings)} warning(s)")
+    for i in errors:
+        lines.append(f"  {i}")
+    for i in warnings:
+        lines.append(f"  {i}")
+
+    lines.append("-" * 60)
+    lines.append(f"dry_run={cfg.app.dry_run}  mock_mode={cfg.app.mock_mode}  cli_enabled={cfg.cli.enabled}")
+    lines.append(f"cameras defined: {len(cfg.cameras)}  enabled: {len(cfg.enabled_cameras())}")
+
+    lines.append("-" * 60)
+    lines.append("Camera TCP reachability (ONVIF port only, no credentials sent):")
+    for cam in cfg.cameras.values():
+        reachable = False
+        try:
+            with socket.create_connection((cam.host, cam.onvif_port), timeout=3):
+                reachable = True
+        except Exception:
+            reachable = False
+        lines.append(f"  {cam.id} ({cam.host}:{cam.onvif_port}): {'REACHABLE' if reachable else 'unreachable'}")
+
+    report = "\n".join(lines) + "\n"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = DIAGNOSTICS_DIR / f"diagnose_{ts}.txt"
+    out_path.write_text(report, encoding="utf-8")
+    diag_logger.info("diagnose run written to %s (%d errors, %d warnings)", out_path, len(errors), len(warnings))
+    print(report)
+    print(f"Full report saved to: {out_path}")
+    return 1 if errors else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=APP_NAME)
+    parser.add_argument("--diagnose", action="store_true",
+                         help="Run headless diagnostics and exit (no GUI, no camera movement).")
+    parser.add_argument("--version", action="store_true", help="Print version and exit.")
+    args = parser.parse_args()
+
+    if args.version:
+        print(f"{APP_NAME} {APP_VERSION}")
+        return 0
+
+    startup_logger = setup_startup_logger()
+    try:
+        ensure_app_dirs()
+        cfg, doc, issues = load_config(CONFIG_PATH)
+    except Exception:
+        startup_logger.error("fatal error loading config.txt: %s", traceback.format_exc())
+        print("Fatal error loading config.txt -- see logs/startup.log", file=sys.stderr)
+        return 1
+
+    if args.diagnose:
+        try:
+            return run_diagnose(cfg, issues)
+        except Exception:
+            startup_logger.error("fatal error during --diagnose: %s", traceback.format_exc())
+            return 1
+
+    if not _single_instance_guard():
+        return 1
+
+    try:
+        app = PTZPatrolGUI(cfg, doc, issues)
+        app.mainloop()
+        return 0
+    except Exception:
+        startup_logger.error("fatal error: %s", traceback.format_exc())
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(APP_NAME, "A fatal error occurred. See logs/startup.log for details.")
+            root.destroy()
+        except Exception:
+            print("A fatal error occurred. See logs/startup.log for details.", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+PYEOF
+python3 -m py_compile /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py && echo "PY_COMPILE OK"
+wc -l /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py
+Output
+PY_COMPILE OK
+3402 /home/claude/build/PTZ_Patrol_Controller/ptz_patrol_gui.py
+
+You are out of free messages until 1:20 AM
+
+ Claude is AI and can make mistakes. Please double-check responses. ​‌
+//a befejezett részeket kérem egy check listán és egy direct letöltési linkel a következő futtatáshoz

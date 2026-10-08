@@ -1,0 +1,951 @@
+CONTINUATION AND DEVELOPMENT PROMPT FOR CLAUDE
+Project: Windows Multi-Camera ONVIF PTZ Patrol Controller
+Development goal: Authorized LAN ONVIF Inventory, Discovery, Identification and Capability Diagnostics
+
+Continue in the SAME Claude conversation and from the EXISTING finalized project directory:
+
+/home/claude/build/PTZ_Patrol_Controller/
+
+Do not restart the project.
+Do not repeat the architecture brief.
+Do not replace the compact five-file architecture.
+Do not create a multi-module Python package.
+Do not ask for approval or another planning round.
+Do not stop after describing the design.
+
+The existing project is already substantially complete and validated in mock mode. Preserve the current working application and extend it carefully.
+
+CURRENT FINAL PROJECT STRUCTURE
+
+PTZ_Patrol_Controller/
+├── ptz_patrol_gui.py
+├── ptz_commands.bat
+├── config.txt
+├── requirements.txt
+└── README.md
+
+Generated runtime directories may remain:
+
+├── logs/
+├── runtime/
+└── diagnostics/
+
+The current project reportedly passed:
+
+- python3 -m py_compile ptz_patrol_gui.py
+- python3 -m pyflakes ptz_patrol_gui.py
+- python3 ptz_patrol_gui.py --version
+- python3 ptz_patrol_gui.py --check-config
+- python3 ptz_patrol_gui.py --diagnose
+- python3 ptz_patrol_gui.py --mock-test
+
+The previous mock test reportedly passed 10/10 checks. Verify the actual current files and do not rely only on this summary.
+
+==================================================
+1. FIRST ACTION: BACK UP AND INSPECT
+==================================================
+
+Before changing any file:
+
+1. Inspect all five files in the existing project directory.
+2. Record filenames, sizes, line counts and modification times.
+3. Run the existing validation commands.
+4. Create a backup archive:
+
+PTZ_Patrol_Controller_BEFORE_DISCOVERY_UPGRADE.zip
+
+5. Provide a direct download link to that backup before editing.
+
+Do not include:
+
+- virtual environments;
+- __pycache__;
+- .pyc files;
+- PID or lock files;
+- generated logs;
+- private credentials;
+- previous ZIP files.
+
+If a validation fails, record the failure, repair it without removing working features, and rerun the check.
+
+==================================================
+2. DEVELOPMENT OBJECTIVE
+==================================================
+
+Extend the application with a safe, authorized, local-network-only discovery and device-inventory system named:
+
+AUTHORIZED LAN ONVIF INVENTORY AND CAPABILITY DISCOVERY
+
+GUI label:
+
+DISCOVER & DIAGNOSE
+
+The goal is to find, identify, group and diagnose ONVIF-capable cameras on a network owned or explicitly administered by the user.
+
+The feature must support:
+
+- local network-adapter detection;
+- user-selected authorized subnet scope;
+- ONVIF WS-Discovery;
+- discovery of ONVIF Device Service XAddr values;
+- passive ARP-table inspection;
+- MAC-address collection when available on the local Layer 2 segment;
+- bounded TCP connection tests against an approved port list;
+- standard ONVIF capability interrogation;
+- stable device identity;
+- duplicate-device merging;
+- manufacturer, model and firmware inventory;
+- functional read-only diagnostics;
+- grouping identical or similar camera models;
+- a small reference-profile database;
+- user approval before adding discovered devices to config.txt.
+
+Normal patrol, worker isolation, mock mode, dry-run protection, Emergency Stop, configuration backup and existing GUI features must continue to work.
+
+==================================================
+3. STRICT SAFETY AND SCOPE RULES
+==================================================
+
+This is NOT a credential-attack or unrestricted scanning feature.
+
+Do not implement:
+
+- password brute force;
+- username dictionaries;
+- factory-password dictionaries;
+- credential spraying;
+- automatic login-combination testing;
+- internet-wide discovery;
+- scanning public IP ranges;
+- automatic scanning of neighboring or unapproved subnets;
+- automatic full TCP 1-65535 scans;
+- firmware activation or modification;
+- camera reboot during diagnostics;
+- factory reset;
+- automatic account creation;
+- network-setting modification;
+- router port forwarding;
+- firewall modification;
+- destructive ONVIF calls;
+- unrestricted Nmap execution.
+
+Only use credentials explicitly entered or selected by the user for devices the user is authorized to administer.
+
+Default operation must be:
+
+- local subnet only;
+- read-only diagnostics;
+- rate limited;
+- bounded by timeouts;
+- bounded by maximum concurrency;
+- no camera movement;
+- no config modification without approval.
+
+Use the terms:
+
+- scoped compatibility probe;
+- bounded endpoint discovery;
+- authorized subnet;
+
+Do not label the feature as brute force.
+
+==================================================
+4. DISCOVERY MODES
+==================================================
+
+Implement three modes.
+
+QUICK
+
+- enumerate active Windows IPv4 network adapters;
+- identify local IPv4 address and mask;
+- allow the user to choose the authorized adapter/subnet;
+- send ONVIF WS-Discovery probes;
+- inspect the Windows ARP cache;
+- merge results;
+- perform no broad port probing.
+
+STANDARD
+
+- everything in QUICK;
+- test only configured candidate ONVIF ports;
+- validate possible ONVIF Device Service endpoints;
+- perform read-only ONVIF device and capability queries;
+- generate compatibility reports.
+
+EXTENDED
+
+- everything in STANDARD;
+- only after a warning and explicit user confirmation;
+- use only a user-provided or config-approved extra port list or bounded port range;
+- rate limit requests;
+- use strict per-port and per-host timeouts;
+- display progress and allow cancellation;
+- never default to all 65535 ports;
+- never run outside approved subnets.
+
+Suggested configuration defaults:
+
+[DISCOVERY]
+enabled = true
+default_mode = QUICK
+allowed_subnets = auto
+candidate_onvif_ports = 80,443,8000,8080,8081,8899
+candidate_rtsp_ports = 554,8554
+connect_timeout_s = 0.75
+soap_timeout_s = 3
+max_parallel_hosts = 8
+max_parallel_ports_per_host = 2
+delay_between_batches_ms = 250
+allow_extended_scan = false
+extended_ports =
+require_confirmation_for_extended = true
+save_reports = true
+collect_mac = true
+collect_ping = true
+ping_is_required = false
+
+Validate all values and enforce safe upper limits.
+
+==================================================
+5. DISCOVERY ORDER
+==================================================
+
+Implement this order:
+
+1. Identify local active IPv4 adapters.
+2. Let the user choose an explicitly authorized adapter and subnet.
+3. Send WS-Discovery Probe messages on the selected interface.
+4. Collect EndpointReference, Types, Scopes, XAddrs and MetadataVersion.
+5. Parse XAddr host, port and path.
+6. Inspect the Windows ARP table.
+7. Optionally perform a bounded host-reachability pass within the authorized subnet.
+8. Do not require ping success.
+9. For unresolved candidate hosts, test only configured candidate ports.
+10. Validate ONVIF endpoints using safe SOAP/read-only behavior.
+11. Query standard device identity and capabilities when credentials allow.
+12. Merge duplicates.
+13. Classify each result.
+14. Show results in the GUI.
+15. Add selected devices to config.txt only after user confirmation.
+
+WS-Discovery must be attempted before port probing.
+
+If WS-Discovery returns a valid XAddr, prefer the camera-provided XAddr over a guessed path.
+
+Multicast may fail across VLANs, firewalls and multiple network interfaces. Report this as a discovery limitation rather than declaring that no cameras exist.
+
+==================================================
+6. HOST REACHABILITY MODEL
+==================================================
+
+Do not use ping as the only definition of an active device.
+
+Track separate evidence fields:
+
+- arp_seen;
+- mac_address;
+- ping_reply;
+- tcp_open_ports;
+- ws_discovery_reply;
+- onvif_device_service_reply;
+- onvif_auth_result;
+- rtsp_candidate;
+- snapshot_candidate;
+- last_seen_utc.
+
+A device can be considered reachable if one or more of these succeed:
+
+- WS-Discovery response;
+- ARP presence;
+- successful TCP connect;
+- valid HTTP/SOAP response;
+- valid ONVIF response;
+- RTSP response.
+
+Display ping as evidence only, not a mandatory requirement.
+
+==================================================
+7. SAFE FUNCTIONAL DIAGNOSTICS
+==================================================
+
+For each confirmed or likely ONVIF endpoint, use non-destructive calls where supported:
+
+Device layer:
+
+- GetSystemDateAndTime
+- GetServices
+- GetCapabilities
+- GetDeviceInformation
+- GetEndpointReference
+- GetScopes
+- GetDiscoveryMode when available
+
+Media layer:
+
+- GetProfiles
+- GetStreamUri
+- GetSnapshotUri
+
+PTZ read-only layer:
+
+- GetNodes
+- GetConfigurations
+- GetConfigurationOptions
+- GetStatus
+- GetPresets
+- GetPresetTours when available
+- GetServiceCapabilities
+
+From the returned data infer support for:
+
+- GotoPreset;
+- SetPreset;
+- RemovePreset;
+- AbsoluteMove;
+- RelativeMove;
+- ContinuousMove;
+- Stop;
+- GotoHome;
+- PTZ status;
+- position feedback;
+- move status;
+- zoom;
+- preset speed;
+- preset tour.
+
+Do not send movement commands during discovery or ordinary diagnostics.
+
+Any functional movement test must require all of these:
+
+- mock_mode = false;
+- dry_run = false;
+- one selected camera;
+- explicit warning dialog;
+- explicit user confirmation;
+- a short bounded movement or known preset;
+- an explicit Stop afterward;
+- a recovery/return option.
+
+==================================================
+8. DEVICE IDENTITY AND DUPLICATE MERGING
+==================================================
+
+Do not use IP address, model name or list position as the sole identity.
+
+Use this identity priority when values exist:
+
+1. ONVIF EndpointReference UUID;
+2. serial number;
+3. hardware ID;
+4. MAC address;
+5. host plus manufacturer and model as a temporary fallback.
+
+Create or retain a stable internal ID such as:
+
+cam_7f52a901
+
+Track:
+
+- stable_id;
+- display_name;
+- endpoint_uuid;
+- serial_number;
+- hardware_id;
+- mac_address;
+- mac_vendor_hint;
+- manufacturer;
+- model;
+- firmware_version;
+- last_ip;
+- onvif_xaddr;
+- onvif_port;
+- rtsp_port;
+- scopes;
+- profiles;
+- capability summary;
+- confidence level;
+- discovery source;
+- last_seen_utc.
+
+When the same stable identity appears at a new IP address, update the existing device candidate instead of adding a duplicate.
+
+When several cameras share the same manufacturer/model/firmware, group them visually but keep separate stable IDs and user display names.
+
+Provide suggested names such as:
+
+WET2440 #1
+WET2440 #2
+WET2440 #3
+
+The user can rename each device before adding it to config.txt.
+
+==================================================
+9. RESULT CLASSIFICATION
+==================================================
+
+Classify every discovered host using evidence:
+
+CONFIRMED_ONVIF
+
+- WS-Discovery or validated Device Service;
+- and a valid ONVIF service response.
+
+LIKELY_ONVIF
+
+- plausible ONVIF endpoint;
+- SOAP/HTTP behavior consistent with ONVIF;
+- but authentication or incomplete response prevents confirmation.
+
+POSSIBLE_CAMERA
+
+- RTSP, snapshot, known camera-like service or profile evidence;
+- ONVIF not confirmed.
+
+NETWORK_DEVICE
+
+- ARP, ping or TCP evidence;
+- no camera/ONVIF confirmation.
+
+UNREACHABLE
+
+- previously known device currently not responding.
+
+Do not label a host as an ONVIF camera based only on an open port.
+
+==================================================
+10. MINI REFERENCE PROFILE DATABASE
+==================================================
+
+Keep the five-file architecture.
+
+Do not add a sixth user-facing database file in this upgrade.
+
+Embed a small, auditable reference-profile database inside ptz_patrol_gui.py, and allow user overrides in config.txt.
+
+Each profile may contain:
+
+- profile_id;
+- manufacturer aliases;
+- model patterns;
+- candidate ONVIF ports;
+- candidate RTSP ports;
+- Device Service path candidates;
+- authentication notes;
+- safe read-only diagnostics;
+- known limitations;
+- confidence level;
+- source description;
+- last verified date.
+
+Required initial profiles:
+
+- generic_standard_onvif;
+- generic_onvif_http_80;
+- generic_onvif_https_443;
+- v380_family_low_confidence;
+- hisilicon_camhi_family_low_confidence;
+- unknown_camera_candidate.
+
+Confidence levels:
+
+OFFICIAL
+MANUFACTURER_DOCUMENTED
+COMMUNITY_VERIFIED
+HEURISTIC
+UNKNOWN
+
+Rules:
+
+- standard ONVIF discovery and capability interrogation always take priority;
+- a reference profile provides hints, not truth;
+- model or MAC-vendor similarity is not sufficient proof;
+- firmware version differences must be recorded;
+- do not include default passwords;
+- do not include credential lists;
+- do not include undocumented destructive endpoints;
+- include only publicly documented or safely inferred compatibility hints.
+
+Allow config.txt overrides, for example:
+
+[DEVICE_PROFILE_OVERRIDE_v380_local]
+enabled = true
+manufacturer_patterns = V380,Macro-video,Unknown
+model_patterns = WET2440
+candidate_onvif_ports = 80,8899
+device_service_paths = /onvif/device_service
+candidate_rtsp_ports = 554
+confidence = HEURISTIC
+notes = Local user override; verify every device independently.
+
+==================================================
+11. MAC ADDRESS AND VENDOR HINTS
+==================================================
+
+On Windows, support ARP-table parsing and MAC collection for local-subnet devices.
+
+Use safe built-in methods first:
+
+- arp -a;
+- getmac;
+- PowerShell Get-NetNeighbor if available;
+- Python standard library/subprocess parsing.
+
+Do not require administrator rights merely to read neighbor information.
+
+MAC limitations must be shown in the UI and README:
+
+- generally reliable only on the local Layer 2 segment;
+- may be absent until traffic has occurred;
+- router/VLAN boundaries obscure remote MAC addresses;
+- MAC randomization or OEM reuse can reduce confidence;
+- OUI/vendor is only a hint;
+- MAC address alone is not a stable universal camera identity.
+
+Do not download vendor/OUI databases automatically during normal operation.
+
+If a small built-in OUI hint table is included, keep it minimal, document its date, and treat it as HEURISTIC.
+
+==================================================
+12. CONFIGURATION CHANGES
+==================================================
+
+Extend config.txt without breaking existing fields.
+
+Add sections similar to:
+
+[DISCOVERY]
+[DISCOVERY_UI]
+[DEVICE_PROFILE_OVERRIDE_*]
+
+Do not remove existing camera, patrol, CLI, mock, dry-run or logging settings.
+
+Preserve comments and ordering.
+
+Before saving discovered cameras:
+
+1. show selected candidate details;
+2. show stable identity fields;
+3. show evidence and classification;
+4. let the user change display name;
+5. let the user select a credential reference or enter one authorized credential set;
+6. let the user choose the ONVIF profile if multiple PTZ-compatible profiles exist;
+7. generate the prospective config sections;
+8. validate them;
+9. create a timestamped backup;
+10. save atomically;
+11. rebuild workers without leaving duplicate threads.
+
+Do not save user credentials in diagnostics or discovery reports.
+
+==================================================
+13. GUI UPGRADE
+==================================================
+
+Replace or extend the current Discover button with:
+
+DISCOVER & DIAGNOSE
+
+Open a modal or child window with:
+
+- network adapter dropdown;
+- authorized subnet display/edit field;
+- mode: QUICK / STANDARD / EXTENDED;
+- candidate port list;
+- timeout settings;
+- maximum concurrency;
+- Start;
+- Cancel;
+- Clear Results;
+- Export Report;
+- Add Selected Cameras.
+
+Results grid columns:
+
+- select;
+- classification;
+- confidence;
+- stable ID;
+- IP;
+- MAC;
+- manufacturer;
+- model;
+- firmware;
+- ONVIF port/XAddr;
+- RTSP candidate;
+- ping;
+- authentication status;
+- PTZ support;
+- discovery source;
+- last seen.
+
+Details pane:
+
+- raw scopes;
+- EndpointReference;
+- serial and hardware ID;
+- services;
+- profiles;
+- capabilities;
+- presets;
+- warnings;
+- matched reference profile and confidence;
+- duplicate/group information.
+
+Provide filters:
+
+- all;
+- confirmed ONVIF;
+- likely ONVIF;
+- possible camera;
+- network device;
+- duplicate group;
+- authentication required.
+
+The scan must remain responsive and cancellable.
+
+Do not call Tkinter methods from discovery worker threads. Use the existing GUI event-queue and root.after() model.
+
+==================================================
+14. BATCH AND PYTHON RESPONSIBILITIES
+==================================================
+
+Keep one BAT file and one Python GUI file.
+
+ptz_commands.bat may add commands:
+
+discover
+arp-scan
+port-probe
+device-info
+capabilities
+
+But Python must own:
+
+- authorized scope validation;
+- adapter enumeration;
+- task scheduling;
+- concurrency limits;
+- cancellation;
+- result merging;
+- stable identity;
+- duplicate grouping;
+- classifications;
+- profile matching;
+- report generation;
+- GUI updates;
+- config approval and saving.
+
+BAT remains a bounded execution bridge only.
+
+Do not place the mini database or discovery state machine in BAT.
+
+Any new BAT command must return the exact machine-readable format already expected by Python:
+
+RESULT:OK:NONE:message
+RESULT:ERROR:CATEGORY:message
+
+Update Python and BAT together so action names and argument order match exactly.
+
+==================================================
+15. OPTIONAL NMAP SUPPORT
+==================================================
+
+Nmap support may be optional, never required.
+
+If implemented:
+
+- disabled by default;
+- executable path configurable;
+- local authorized subnet only;
+- selected hosts/ports only;
+- no aggressive OS scan;
+- no vulnerability scripts;
+- no default-script scan;
+- no credential scripts;
+- no UDP full scan;
+- no Internet targets;
+- user confirmation required;
+- command preview shown before execution;
+- output parsed as supplemental evidence only.
+
+The application must work without Nmap.
+
+Use direct socket connection tests and WS-Discovery as the built-in default.
+
+==================================================
+16. REPORTS
+==================================================
+
+Save under diagnostics/:
+
+- discovery_<timestamp>.json;
+- discovery_<timestamp>.txt;
+- device_<stable_id>_<timestamp>.json;
+- device_<stable_id>_<timestamp>.txt;
+- optional raw XML when requested.
+
+Reports must contain:
+
+- scan scope;
+- adapter;
+- subnet;
+- start/end timestamps;
+- mode;
+- rate limits;
+- candidate ports;
+- discovered devices;
+- evidence;
+- identity;
+- classification;
+- capabilities;
+- warnings;
+- duplicate groups;
+- matched profiles;
+- unverified fields.
+
+Reports must not contain:
+
+- plaintext passwords;
+- Authorization headers;
+- WS-Security password data;
+- CLI command lines containing secrets;
+- secret-bearing URLs.
+
+==================================================
+17. TESTS AND HEADLESS VALIDATION
+==================================================
+
+Extend the existing command-line self-tests.
+
+Add:
+
+--discovery-mock-test
+--check-device-profiles
+
+The discovery mock test must simulate at least:
+
+1. two identical-model cameras with different stable IDs and MACs;
+2. the same camera appearing twice by WS-Discovery and port probing;
+3. a camera that changes IP but retains EndpointReference;
+4. a host with ping disabled but valid ONVIF;
+5. a host with an open candidate port but no ONVIF response;
+6. a camera requiring authentication;
+7. a limited camera with streaming but no PTZ;
+8. cancellation during STANDARD discovery;
+9. rate-limit enforcement;
+10. config addition only after approval.
+
+The test must verify:
+
+- deduplication;
+- stable IDs;
+- classifications;
+- grouping;
+- no movement;
+- no credentials in reports;
+- no cross-camera worker disruption;
+- bounded shutdown.
+
+Run:
+
+python3 -m py_compile ptz_patrol_gui.py
+python3 -m pyflakes ptz_patrol_gui.py
+python3 ptz_patrol_gui.py --version
+python3 ptz_patrol_gui.py --check-config
+python3 ptz_patrol_gui.py --diagnose
+python3 ptz_patrol_gui.py --mock-test
+python3 ptz_patrol_gui.py --discovery-mock-test
+python3 ptz_patrol_gui.py --check-device-profiles
+
+If GUI execution is impossible due to a missing display server, test all headless paths and state the GUI limitation honestly.
+
+If native Windows BAT execution is unavailable, perform static checks and state that limitation honestly.
+
+==================================================
+18. STATIC AND SECURITY AUDIT
+==================================================
+
+Search for and resolve:
+
+- TODO;
+- NotImplemented;
+- unfinished pass placeholders;
+- undefined names;
+- missing handlers;
+- unbounded threads;
+- unbounded subprocesses;
+- unrestricted subnets;
+- unrestricted port ranges;
+- hidden automatic scanning;
+- password lists;
+- credentials in logs/reports;
+- unsafe shell concatenation;
+- duplicate stable IDs;
+- direct Tkinter calls from worker threads;
+- discovery results written to config without approval;
+- ping treated as mandatory;
+- open port treated as confirmed ONVIF;
+- MAC treated as definitive identity;
+- concurrent use of one camera bridge;
+- regressions in existing patrol and Emergency Stop behavior.
+
+Do not remove working patrol features while adding discovery.
+
+==================================================
+19. README UPDATE
+==================================================
+
+Update README.md with:
+
+- Authorized LAN discovery purpose;
+- legal/authorization scope;
+- QUICK, STANDARD and EXTENDED modes;
+- why WS-Discovery is primary;
+- multicast and VLAN limitations;
+- why ping is not required;
+- candidate port behavior;
+- rate limits and timeouts;
+- how MAC addresses are obtained and their limitations;
+- stable identity priority;
+- duplicate merging;
+- mini profile database confidence levels;
+- difference between official conformance and heuristic compatibility;
+- how to add discovered cameras safely;
+- credential handling;
+- why password brute force is not implemented;
+- why full unrestricted port scanning is not implemented;
+- optional Nmap support and restrictions;
+- diagnostics and reports;
+- privacy considerations;
+- recovery to mock mode;
+- known V380/WET2440 uncertainty;
+- existing patrol safety principles.
+
+==================================================
+20. FINAL DELIVERY
+==================================================
+
+After completing the upgrade, create:
+
+PTZ_Patrol_Controller_DISCOVERY_UPGRADE.zip
+
+The archive must contain exactly:
+
+PTZ_Patrol_Controller/
+├── ptz_patrol_gui.py
+├── ptz_commands.bat
+├── config.txt
+├── requirements.txt
+└── README.md
+
+Do not include:
+
+- credentials;
+- logs;
+- runtime files;
+- diagnostics containing secrets;
+- virtual environments;
+- __pycache__;
+- .pyc files;
+- previous ZIP files.
+
+Provide direct download links to:
+
+- ptz_patrol_gui.py;
+- ptz_commands.bat;
+- config.txt;
+- requirements.txt;
+- README.md;
+- PTZ_Patrol_Controller_BEFORE_DISCOVERY_UPGRADE.zip;
+- PTZ_Patrol_Controller_DISCOVERY_UPGRADE.zip.
+
+==================================================
+21. RESPONSE FORMAT
+==================================================
+
+Keep prose short and prioritize artifacts.
+
+Use this structure:
+
+1. Pre-upgrade verification checklist.
+2. Direct download link to the backup ZIP.
+3. Concise implementation summary.
+4. Security and scope summary.
+5. Validation results with actual command output summaries.
+6. Known limitations.
+7. Final checklist.
+8. Direct download links to all files and the upgrade ZIP.
+9. Exact Windows first-run commands.
+
+Final checklist:
+
+BACKUP
+[ ] existing five files inspected
+[ ] original validation rerun
+[ ] pre-upgrade ZIP created
+[ ] direct backup link provided
+
+DISCOVERY IMPLEMENTATION
+[ ] adapter enumeration
+[ ] authorized subnet selection
+[ ] WS-Discovery
+[ ] ARP/MAC collection
+[ ] bounded candidate-port probing
+[ ] ONVIF endpoint validation
+[ ] device identity collection
+[ ] capability diagnostics
+[ ] stable IDs
+[ ] duplicate merging
+[ ] identical-model grouping
+[ ] result classification
+[ ] mini reference profiles
+[ ] user-approved config addition
+[ ] cancellable responsive GUI
+[ ] redacted reports
+
+SAFETY
+[ ] no password brute force
+[ ] no credential dictionary
+[ ] no unrestricted Internet scanning
+[ ] no default full 1-65535 scan
+[ ] Extended mode disabled by default
+[ ] scan scope validation
+[ ] concurrency and rate limits
+[ ] no diagnostic movement
+[ ] no config modification without approval
+[ ] no credentials in logs/reports
+
+REGRESSION
+[ ] existing mock test still passes
+[ ] patrol start/pause/resume/stop preserved
+[ ] worker isolation preserved
+[ ] Emergency Stop preserved
+[ ] config backups preserved
+[ ] dry-run protection preserved
+
+VALIDATION
+[ ] py_compile passed
+[ ] pyflakes passed
+[ ] --check-config passed
+[ ] --diagnose passed
+[ ] --mock-test passed
+[ ] --discovery-mock-test passed
+[ ] --check-device-profiles passed
+[ ] secrets scan passed
+[ ] Windows BAT execution status stated honestly
+
+ARTIFACTS
+[ ] direct ptz_patrol_gui.py link
+[ ] direct ptz_commands.bat link
+[ ] direct config.txt link
+[ ] direct requirements.txt link
+[ ] direct README.md link
+[ ] direct backup ZIP link
+[ ] direct PTZ_Patrol_Controller_DISCOVERY_UPGRADE.zip link
+
+Do not ask for approval.
+Do not stop after planning.
+Do not split the upgrade into batches.
+Do not discard the current validated project.
+Implement, validate, package and return the complete upgraded project in this same run.

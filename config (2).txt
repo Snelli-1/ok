@@ -1,0 +1,276 @@
+; ============================================================
+; PTZ Patrol Controller - config.txt
+; ============================================================
+; This is the ONLY authoritative user-editable configuration file.
+; It is safe to hand-edit. On save, the app writes a temp file,
+; re-parses + validates it, backs up the original into
+; runtime/backups/, then atomically replaces config.txt.
+;
+; UNITS: all *_s keys are SECONDS. pan/tilt/zoom are normalized
+; ONVIF-style values, generally in the range -1.0 .. 1.0.
+;
+; PATROL STEP SYNTAX (key=value pairs separated by ';'):
+;   step_1 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=5;enabled=true
+;   step_2 = action=WAIT;dwell_s=5;enabled=true
+;   step_3 = action=CONTINUOUS_MOVE;pan=0.2;tilt=0.0;zoom=0.0;move_s=3;settle_s=1;dwell_s=5;enabled=true
+;   step_4 = action=STOP;dwell_s=1;enabled=true
+;   step_5 = action=GOTO_HOME;settle_s=1;dwell_s=5;enabled=true
+; Supported actions: GOTO_PRESET, WAIT, CONTINUOUS_MOVE, STOP, GOTO_HOME
+; Every CONTINUOUS_MOVE is always followed internally by an explicit Stop.
+;
+; adapter = auto | onvif | cli | mock
+;   auto -> uses mock when [APPLICATION] mock_mode=true, else native Python ONVIF
+;   onvif -> always uses the native Python ONVIF layer
+;   cli  -> optional legacy ptz_commands.bat + external ONVIF CLI fallback
+;   mock -> always simulated in Python, never touches ptz_commands.bat
+;
+; SAFETY DEFAULT: dry_run=true and mock_mode=true ship together so the
+; app is fully explorable with zero real cameras and zero risk.
+; ============================================================
+
+[META]
+config_version = 1
+
+[APPLICATION]
+language = en
+log_level = INFO
+log_max_bytes = 2000000
+log_backup_count = 5
+autostart_patrols = false
+command_timeout_s = 8
+dry_run = true
+mock_mode = true
+
+[SECURITY]
+; plaintext is the only implemented backend in this version.
+; windows_credential_manager is a documented future extension point.
+credential_backend = plaintext
+warn_plaintext = true
+redact_logs = true
+
+[PREVIEW]
+; off | snapshot | low_fps
+mode = off
+fps = 1
+max_tiles = 8
+tile_width_px = 220
+
+[MANUAL_OVERRIDE]
+default_pause_s = 300
+pause_options_s = 120,300,900,0
+resume_policy = restart_current_step
+manual_speed_default = 0.5
+
+[CLI]
+; Fill these in only once you have verified the exact syntax of your
+; chosen ONVIF CLI (onvif-python CLI / Easy ONVIF CLI / onvif_control /
+; other). Leave enabled=false to keep every camera on mock/dry-run.
+enabled = false
+executable =
+probe_template =
+services_template =
+profiles_template =
+presets_template =
+status_template =
+goto_template =
+move_template =
+stop_template =
+home_template =
+snapshot_template =
+
+[SHUTDOWN]
+return_home_on_stop = false
+worker_join_timeout_s = 5
+
+; ============================================================
+; Authorized LAN ONVIF discovery ("Discover & Diagnose" in the GUI).
+; This is a SCOPED COMPATIBILITY PROBE on a subnet YOU explicitly
+; select -- never Internet-wide, never a 1-65535 port sweep, never
+; credential guessing. See README.md "Authorized LAN discovery".
+; ============================================================
+[DISCOVERY]
+enabled = true
+; QUICK | STANDARD | EXTENDED -- EXTENDED additionally requires
+; allow_extended_scan=true below AND an explicit on-screen confirmation.
+default_mode = QUICK
+allowed_subnets = auto
+candidate_onvif_ports = 80,443,8000,8080,8081,8899
+candidate_rtsp_ports = 554,8554
+connect_timeout_s = 0.75
+soap_timeout_s = 3
+max_parallel_hosts = 8
+max_parallel_ports_per_host = 2
+delay_between_batches_ms = 250
+allow_extended_scan = false
+extended_ports =
+require_confirmation_for_extended = true
+save_reports = true
+collect_mac = true
+collect_ping = true
+ping_is_required = false
+
+[DISCOVERY_UI]
+; Remembers your last choices in the Discover & Diagnose dialog.
+; Purely a convenience -- never affects the safety bounds above.
+last_adapter_name =
+last_subnet_cidr =
+last_mode = QUICK
+last_filter = All
+
+; Optional, additional entries for the built-in mini reference-profile
+; database (profiles are HINTS only -- never proof, never credentials).
+[DEVICE_PROFILE_OVERRIDE_v380_local]
+enabled = true
+manufacturer_patterns = V380,Macro-video,Unknown
+model_patterns = WET2440
+candidate_onvif_ports = 80,8899
+device_service_paths = /onvif/device_service
+candidate_rtsp_ports = 554
+confidence = HEURISTIC
+notes = Local user override; verify every device independently.
+
+; ---------------- Camera 1: fully functional mock ----------------
+[CAMERA_cam_entrance]
+id = cam_entrance
+name = Entrance (mock: full)
+enabled = true
+host = 192.168.1.50
+onvif_port = 8899
+rtsp_port = 554
+adapter = auto
+mock_profile = full
+username = ptzuser
+password = CHANGE_ME
+profile_token =
+patrol = entrance_patrol
+home_preset = MAIN
+connect_timeout_s = 5
+command_timeout_s = 8
+retry_count = 3
+retry_delay_s = 2
+reconnect_backoff_initial_s = 2
+reconnect_backoff_max_s = 60
+on_start = goto_home
+on_stop = stop
+arrival_policy = fixed_settle
+
+[CAMERA_cam_entrance_PRESETS]
+MAIN = 1
+LEFT = 2
+RIGHT = 3
+
+[CAMERA_cam_entrance_CALIBRATION]
+enabled = false
+pan_lr_s = 0
+pan_rl_s = 0
+tilt_bt_s = 0
+tilt_tb_s = 0
+latency_s = 0.25
+samples_per_direction = 5
+resync_every_s = 900
+resync_preset = MAIN
+
+[PATROL_entrance_patrol]
+enabled = true
+repeat_mode = FOREVER
+repeat_count = 1
+step_1 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=8;enabled=true
+step_2 = action=GOTO_PRESET;target=LEFT;settle_s=1;dwell_s=4;enabled=true
+step_3 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=8;enabled=true
+step_4 = action=GOTO_PRESET;target=RIGHT;settle_s=1;dwell_s=4;enabled=true
+
+; ---------------- Camera 2: intermittently disconnecting mock ----------------
+[CAMERA_cam_gate]
+id = cam_gate
+name = Gate (mock: intermittent)
+enabled = true
+host = 192.168.1.51
+onvif_port = 8899
+rtsp_port = 554
+adapter = auto
+mock_profile = intermittent
+username = ptzuser
+password = CHANGE_ME
+profile_token =
+patrol = gate_patrol
+home_preset = GATE
+connect_timeout_s = 5
+command_timeout_s = 8
+retry_count = 3
+retry_delay_s = 2
+reconnect_backoff_initial_s = 2
+reconnect_backoff_max_s = 60
+on_start = goto_home
+on_stop = stop
+arrival_policy = fixed_settle
+
+[CAMERA_cam_gate_PRESETS]
+GATE = 1
+PARKING = 2
+DOOR = 3
+
+[CAMERA_cam_gate_CALIBRATION]
+enabled = false
+pan_lr_s = 0
+pan_rl_s = 0
+tilt_bt_s = 0
+tilt_tb_s = 0
+latency_s = 0.25
+samples_per_direction = 5
+resync_every_s = 900
+resync_preset = GATE
+
+[PATROL_gate_patrol]
+enabled = true
+repeat_mode = FOREVER
+repeat_count = 1
+step_1 = action=GOTO_PRESET;target=GATE;settle_s=1;dwell_s=6;enabled=true
+step_2 = action=GOTO_PRESET;target=PARKING;settle_s=1;dwell_s=4;enabled=true
+step_3 = action=GOTO_PRESET;target=DOOR;settle_s=1;dwell_s=5;enabled=true
+
+; ---------------- Camera 3: limited-capability mock (presets only) ----------------
+[CAMERA_cam_side]
+id = cam_side
+name = Side yard (mock: limited)
+enabled = true
+host = 192.168.1.52
+onvif_port = 8899
+rtsp_port = 554
+adapter = auto
+mock_profile = limited
+username = ptzuser
+password = CHANGE_ME
+profile_token =
+patrol = side_patrol
+home_preset = MAIN
+connect_timeout_s = 5
+command_timeout_s = 8
+retry_count = 3
+retry_delay_s = 2
+reconnect_backoff_initial_s = 2
+reconnect_backoff_max_s = 60
+on_start = goto_home
+on_stop = stop
+arrival_policy = fixed_settle
+
+[CAMERA_cam_side_PRESETS]
+MAIN = 1
+SIDE = 2
+
+[CAMERA_cam_side_CALIBRATION]
+enabled = false
+pan_lr_s = 0
+pan_rl_s = 0
+tilt_bt_s = 0
+tilt_tb_s = 0
+latency_s = 0.25
+samples_per_direction = 5
+resync_every_s = 900
+resync_preset = MAIN
+
+[PATROL_side_patrol]
+enabled = true
+repeat_mode = FOREVER
+repeat_count = 1
+step_1 = action=GOTO_PRESET;target=MAIN;settle_s=1;dwell_s=7;enabled=true
+step_2 = action=GOTO_PRESET;target=SIDE;settle_s=1;dwell_s=3;enabled=true

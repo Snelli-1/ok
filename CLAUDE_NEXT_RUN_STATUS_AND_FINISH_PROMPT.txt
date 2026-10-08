@@ -1,0 +1,365 @@
+CONTINUATION PROMPT FOR CLAUDE
+Project: Windows Multi-Camera ONVIF PTZ Patrol Controller
+
+Continue in the SAME Claude conversation and from the EXISTING build directory:
+
+/home/claude/build/PTZ_Patrol_Controller/
+
+Do not restart the project from scratch.
+Do not repeat the architecture brief.
+Do not regenerate already completed sections unless a validation failure requires a correction.
+Do not ask for approval or another planning round.
+
+FIRST ACTION: INSPECT AND PRESERVE CURRENT WORK
+
+Before editing anything, inspect every file currently present under:
+
+/home/claude/build/PTZ_Patrol_Controller/
+
+Confirm the exact files, line counts, sizes, and last modified times. Treat the existing files as the source of truth. The previous run reached a successfully parsed and byte-compiled Python file of approximately 3402 lines, but verify this instead of assuming it.
+
+CURRENTLY OBSERVED COMPLETION CHECKLIST
+
+Use this as the starting checklist, then correct it after inspecting the real build directory.
+
+COMPLETED OR SUBSTANTIALLY IMPLEMENTED IN ptz_patrol_gui.py
+
+[x] Single-file Windows Python/Tkinter architecture selected
+[x] Imports and global constants section
+[x] Enums and dataclasses/data models
+[x] Line-preserving INI/configuration document class
+[x] config.txt parsing helpers
+[x] Patrol-step parser
+[x] Camera and patrol parsing
+[x] Typed application configuration validation
+[x] Default mock-safe configuration embedded in Python
+[x] Three mock camera definitions in the embedded default configuration
+[x] Comment/order-preserving config update logic
+[x] Timestamped backup and atomic config save logic
+[x] CLI cache generation without storing passwords
+[x] Secret redaction and logging filters
+[x] Rotating application, startup, diagnostics and per-camera logs
+[x] BAT subprocess bridge with captured stdout/stderr and timeout
+[x] Structured BAT RESULT line parsing
+[x] Abstract CameraBridge interface
+[x] CLI camera bridge with dry-run protection
+[x] Capability report generation and saving
+[x] Independent CameraWorker thread per camera
+[x] PriorityQueue-based serialized command handling
+[x] Interruptible settling and dwell waits
+[x] Manual override and dead-man protection logic
+[x] Preset patrol execution
+[x] ContinuousMove followed internally by Stop
+[x] Recovery and reconnect logic
+[x] WorkerManager for fleet operations
+[x] Mock camera bridge with full, intermittent and limited profiles
+[x] Main Tkinter GUI layout
+[x] Camera list and selection controls
+[x] Manual PTZ pad
+[x] Dynamic patrol editor
+[x] 4 x 2 camera status/preview tile grid
+[x] Bottom status bar and Emergency Stop control
+[x] GUI callbacks for patrol and camera actions
+[x] Event queue polling through root.after()
+[x] Graceful shutdown flow
+[x] Single-instance PID guard
+[x] Headless diagnostic routine
+[x] main() and command-line parser
+[x] Python AST parsing succeeded during construction
+[x] python3 -m py_compile succeeded during the previous run
+[x] Last observed Python source length: approximately 3402 lines
+
+KNOWN ITEMS THAT REQUIRE VERIFICATION OR CORRECTION
+
+[ ] Verify that every referenced enum, dataclass, constant and helper function exists before first use
+[ ] Verify that request_probe() exists and is correctly handled by CameraWorker
+[ ] Verify that request_snapshot() exists and is correctly handled by CameraWorker
+[ ] Verify that PROBE and SNAPSHOT command types are processed in CameraWorker._handle_command()
+[ ] Verify that one_shot_cycle_limit is declared, initialized and actually enforced
+[ ] Verify that Start and Stop change worker state only through serialized commands, not unsafe direct GUI-thread attribute modification
+[ ] Verify that Emergency Stop always preempts dwell and settling waits
+[ ] Verify that PriorityQueue entries with equal priority use a monotonic sequence number and never compare dicts/custom payloads
+[ ] Verify that manual move behavior is genuinely bounded and does not immediately stop before useful movement occurs
+[ ] Verify that mock intermittent failures do not permanently break unrelated cameras
+[ ] Verify that dry-run never sends goto, move or home commands to a real camera
+[ ] Verify how Stop behaves in dry-run and document the deliberate safety decision
+[ ] Verify that config save and worker rebuild cannot leave duplicate workers running
+[ ] Verify that config parser preserves comments, ordering and unknown keys as intended
+[ ] Verify remove_keys_matching(section, "") does not accidentally remove non-preset managed content
+[ ] Verify thread shutdown with bounded joins
+[ ] Verify Tkinter is never called from worker threads
+[ ] Verify preview image references are retained
+[ ] Verify non-ASCII Windows paths and project paths containing spaces
+[ ] Verify Python 3.10 compatibility, not only the container Python version
+[ ] Verify no plaintext password appears in logs, diagnostics, CLI cache or ZIP
+
+FILES NOT YET CONFIRMED AS COMPLETE
+
+[ ] ptz_commands.bat
+[ ] config.txt as a standalone file matching the parser exactly
+[ ] requirements.txt matching actual imports
+[ ] README.md with complete Windows instructions
+[ ] PTZ_Patrol_Controller.zip
+
+FIRST RESPONSE SECTION: STATUS CHECKLIST AND DIRECT DOWNLOAD
+
+At the beginning of your response, provide a concise status checklist with these headings:
+
+1. Verified complete
+2. Present but needs correction
+3. Missing
+4. Validation results
+
+Use [x], [~], and [ ] markers.
+
+Immediately after the checklist, create and provide a DIRECT DOWNLOAD LINK to an interim archive named:
+
+PTZ_Patrol_Controller_INTERIM.zip
+
+The interim ZIP must contain every currently existing project file, even if the project is not yet complete. Do not include:
+
+- virtual environments;
+- __pycache__;
+- .pyc files;
+- runtime PID/lock files;
+- generated logs containing secrets;
+- personal credentials.
+
+Also provide direct download links to every currently existing human-authored file, especially:
+
+- ptz_patrol_gui.py
+- ptz_commands.bat, if present
+- config.txt, if present
+- requirements.txt, if present
+- README.md, if present
+
+If a direct artifact link cannot be created, explicitly state the exact reason and still continue the implementation. Do not stop merely because linking fails.
+
+THEN CONTINUE AND FINISH THE PROJECT
+
+After the interim checklist and download links, continue implementation in the same run.
+
+The final project must contain exactly these five user-facing files:
+
+PTZ_Patrol_Controller/
+├── ptz_patrol_gui.py
+├── ptz_commands.bat
+├── config.txt
+├── requirements.txt
+└── README.md
+
+Generated runtime directories are allowed when the program runs:
+
+- logs/
+- runtime/
+- diagnostics/
+
+Do not create a multi-module Python package.
+Do not split the implementation into batches.
+Do not leave TODO, pass, placeholder, pseudocode or omitted essential code.
+
+REQUIRED COMPLETION TASKS
+
+1. AUDIT ptz_patrol_gui.py
+
+Run a systematic static audit and fix all issues, including:
+
+- undefined names;
+- methods referenced but not implemented;
+- command types not handled;
+- unsafe direct state mutation from GUI callbacks;
+- unused or inconsistent fields;
+- wrong enum values;
+- mismatched configuration keys;
+- incomplete one-cycle testing logic;
+- worker rebuild races;
+- dead-man timing errors;
+- dry-run safety errors;
+- mock-mode errors;
+- exception paths that leave a camera moving;
+- shutdown paths that fail to issue Stop.
+
+2. COMPLETE ptz_commands.bat
+
+The single BAT file must support:
+
+run
+stop
+restart
+diagnose
+probe
+services
+profiles
+presets
+status
+goto
+move
+stop-camera
+home
+snapshot
+
+The BAT file must:
+
+- use %~dp0 as the project directory;
+- work from paths containing spaces;
+- validate arguments;
+- avoid echoing passwords;
+- preserve exit codes;
+- return a final machine-readable line in the exact format expected by Python:
+
+RESULT:OK:NONE:message
+RESULT:ERROR:CATEGORY:message
+
+- support mock-safe diagnose behavior;
+- avoid recursively launching the GUI for camera commands;
+- use ONVIF_PASSWORD only as a temporary environment variable;
+- read runtime/cli_cache.txt consistently with the Python writer;
+- clearly refuse real movement if the CLI is disabled or a required template is empty.
+
+3. CREATE standalone config.txt
+
+config.txt must exactly match the parser and embedded default assumptions.
+
+Default safety settings:
+
+dry_run = true
+mock_mode = true
+CLI enabled = false
+
+Include the three mock cameras:
+
+- full-capability mock;
+- intermittent mock;
+- limited-capability mock.
+
+Use short patrol timings for immediate demonstration.
+
+4. CREATE requirements.txt
+
+List only dependencies actually imported by ptz_patrol_gui.py.
+Pin versions where appropriate.
+If the standard library is enough except Pillow, do not add unrelated packages.
+Clarify whether Pillow is optional or required, and keep code behavior consistent with that decision.
+
+5. CREATE README.md
+
+README must include complete Windows instructions:
+
+- purpose and limitations;
+- Python version;
+- creating a virtual environment;
+- installing requirements;
+- first mock-mode start;
+- diagnose command;
+- configuration backup behavior;
+- mock and dry-run meanings;
+- switching to a real camera safely;
+- ONVIF vs RTSP port distinction;
+- CLI template placeholders;
+- restricted ONVIF account recommendation;
+- testing one preset safely;
+- Emergency Stop;
+- graceful shutdown;
+- log and diagnostics locations;
+- known V380 Pro WET2440 uncertainty;
+- rollback to mock mode;
+- explicit warning that PTZ patrol does not replace fixed coverage at critical areas.
+
+VALIDATION REQUIRED BEFORE FINAL DELIVERY
+
+Run as many of these as the environment permits:
+
+python3 -m py_compile ptz_patrol_gui.py
+python3 ptz_patrol_gui.py --version
+python3 ptz_patrol_gui.py --diagnose
+
+Add or restore these command-line checks if the current Python file lacks them:
+
+python3 ptz_patrol_gui.py --check-config
+python3 ptz_patrol_gui.py --mock-test
+
+The --mock-test command must be headless and finite. It must verify at minimum:
+
+- config loads;
+- three mock workers can start;
+- the full mock progresses;
+- the intermittent mock can fail without stopping the full mock;
+- the limited mock reports limited capabilities;
+- pause/resume works;
+- Emergency Stop interrupts waits;
+- all workers terminate within bounded time.
+
+If Windows BAT execution is unavailable in the Linux build environment, perform static BAT checks and state that limitation accurately. Do not claim that Windows BAT execution was performed when it was not.
+
+Run searches or analysis for:
+
+- TODO
+- pass
+- NotImplemented
+- undefined request_probe
+- undefined request_snapshot
+- unhandled CommandType members
+- direct GUI-thread bridge calls
+- direct worker state mutation from GUI
+- secrets in generated files
+- mismatched config keys
+
+Fix all actionable problems.
+
+FINAL ARTIFACTS
+
+Create:
+
+PTZ_Patrol_Controller.zip
+
+The final ZIP must contain exactly:
+
+PTZ_Patrol_Controller/
+├── ptz_patrol_gui.py
+├── ptz_commands.bat
+├── config.txt
+├── requirements.txt
+└── README.md
+
+Also provide direct download links for all five files and the ZIP.
+
+FINAL RESPONSE CHECKLIST
+
+At the end, provide a second checklist with:
+
+IMPLEMENTATION
+[ ] Python GUI complete
+[ ] BAT dispatcher complete
+[ ] config.txt complete
+[ ] requirements.txt complete
+[ ] README complete
+
+VALIDATION
+[ ] py_compile passed
+[ ] --version passed
+[ ] --diagnose passed
+[ ] --check-config passed
+[ ] --mock-test passed
+[ ] no essential TODO/pass/NotImplemented remains
+[ ] no known undefined names remain
+[ ] Python/BAT command names match
+[ ] config keys match the parser
+[ ] dry-run movement protection verified
+[ ] worker isolation verified
+[ ] Emergency Stop verified in mock test
+[ ] secrets scan passed
+[ ] Windows-only BAT execution limitation stated honestly if applicable
+
+ARTIFACTS
+[ ] Direct link: ptz_patrol_gui.py
+[ ] Direct link: ptz_commands.bat
+[ ] Direct link: config.txt
+[ ] Direct link: requirements.txt
+[ ] Direct link: README.md
+[ ] Direct link: PTZ_Patrol_Controller.zip
+
+Keep explanatory prose short. The checklist, completed artifacts, validation results and direct download links are the priority.
+
+Do not ask whether to continue.
+Do not stop after presenting the interim status.
+Finish the complete project in this same run.

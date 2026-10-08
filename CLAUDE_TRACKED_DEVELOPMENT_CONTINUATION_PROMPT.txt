@@ -1,0 +1,853 @@
+CONTINUATION, CHANGE-LOG, BUG-TRACKING, TESTING, AND COMPLETION PROMPT FOR CLAUDE
+Project: PTZ Patrol Controller
+
+Continue in the SAME Claude conversation and from the EXISTING working directory:
+
+/home/claude/build/PTZ_Patrol_Controller/
+
+The latest visible Windows checkpoint folder was named similar to:
+
+PTZ_Patrol_Controller_LIVE_QOL_RESUME_START/PTZ_Patrol_Controller/
+
+The current project visibly contains:
+
+- diagnostics/
+- logs/
+- runtime/
+- config.txt
+- ptz_commands.bat
+- ptz_patrol_gui.py
+- README.md
+- requirements.txt
+
+A recent Claude run reported work including:
+
+- preparing a backup;
+- finishing discovery validation;
+- editing ptz_patrol_gui.py;
+- verifying discovery after GUI integration;
+- structural code-safety checks;
+- presenting a ZIP whose visible name began with:
+  “Ptz patrol controller live qol resum...”
+
+Do not restart the project.
+Do not repeat the architecture brief.
+Do not discard existing working code.
+Do not replace the single-file Python architecture.
+Do not create a multi-module Python package.
+Do not ask for approval.
+Do not stop after planning.
+
+The project must retain these five primary source files:
+
+PTZ_Patrol_Controller/
+├── ptz_patrol_gui.py
+├── ptz_commands.bat
+├── config.txt
+├── requirements.txt
+└── README.md
+
+Generated directories may remain:
+
+├── diagnostics/
+├── logs/
+└── runtime/
+
+This run introduces one mandatory project-management file:
+
+PROJECT_PROGRESS_LOG.txt
+
+This TXT file becomes the authoritative chronological development ledger shared across all future Claude runs, other AI systems, maintainers, testers and users.
+
+==================================================
+1. FIRST ACTION: INSPECT, VERIFY, AND BACK UP
+==================================================
+
+Before editing any source file:
+
+1. Inspect every current project file and generated directory.
+2. Record filenames, byte sizes, line counts and modification times.
+3. Determine the exact latest completed function/class and the exact current implementation state.
+4. Run py_compile before editing.
+5. Run all currently available headless tests.
+6. Identify whether the prior run left any incomplete methods, callbacks, parser entries, GUI widgets or test commands.
+7. Create a clean backup:
+
+PTZ_Patrol_Controller_BEFORE_PROGRESS_LEDGER_UPGRADE.zip
+
+Exclude:
+
+- credentials;
+- generated logs containing secrets;
+- runtime PID/lock files;
+- virtual environments;
+- __pycache__;
+- .pyc files;
+- previous ZIP files.
+
+Provide a direct download link to the backup, then continue in the same response.
+
+==================================================
+2. CREATE THE AUTHORITATIVE PROJECT LEDGER
+==================================================
+
+Create:
+
+PROJECT_PROGRESS_LOG.txt
+
+Place PROJECT_PROGRESS_LOG.txt in the project root beside README.md.
+
+This file must be included in all future checkpoint and final ZIP archives, even though the application still has only five executable/configuration source files.
+
+PROJECT_PROGRESS_LOG.txt is a documentation and handover artifact, not a Python module.
+
+The ledger must be append-only in normal operation.
+
+Never erase previous run entries.
+Never silently rewrite development history.
+Never mark an item complete without evidence.
+Never include passwords, authentication headers, credential-bearing URLs or private camera data.
+
+At the start of every future run:
+
+1. Read PROJECT_PROGRESS_LOG.txt completely.
+2. Inspect the actual files.
+3. Compare the actual project state with the ledger.
+4. Correct discrepancies in a new ledger entry, without deleting old entries.
+5. State what changed since the previous run.
+
+At the end of every future run:
+
+1. Append one complete run entry.
+2. Record every modified file.
+3. Record every meaningful change.
+4. Record every test method and exact result.
+5. Record every bug found, fixed or still open.
+6. Record incomplete and deferred work.
+7. Record the exact next implementation step.
+8. Record artifact names and checksums where practical.
+9. Save and validate the ledger before packaging.
+
+==================================================
+3. REQUIRED LEDGER FORMAT
+==================================================
+
+Use plain UTF-8 text and this stable structure:
+
+======================================================================
+PTZ PATROL CONTROLLER - PROJECT PROGRESS LOG
+======================================================================
+
+PROJECT ID:
+CURRENT APPLICATION VERSION:
+PROJECT DIRECTORY:
+LEDGER FORMAT VERSION:
+LAST UPDATED UTC:
+LAST UPDATED LOCAL:
+CURRENT CHECKPOINT NAME:
+CURRENT RELEASE STATUS:
+
+---------------------------------------------------------------------
+CURRENT OVERALL STATUS
+---------------------------------------------------------------------
+
+READY AND VERIFIED:
+[x] ...
+
+IMPLEMENTED BUT NOT FULLY VERIFIED:
+[~] ...
+
+IN PROGRESS:
+[>] ...
+
+NOT STARTED:
+[ ] ...
+
+BLOCKED:
+[!] ...
+
+KNOWN LIMITATIONS:
+[-] ...
+
+NEXT REQUIRED ACTION:
+...
+
+---------------------------------------------------------------------
+CURRENT FEATURE MATRIX
+---------------------------------------------------------------------
+
+Use one line per feature:
+
+FEATURE_ID | STATUS | IMPLEMENTATION | TEST EVIDENCE | NOTES
+
+Example:
+DISCOVERY_WS | VERIFIED | ptz_patrol_gui.py: DiscoveryEngine | --discovery-mock-test PASS | Real Windows multicast still untested
+
+Allowed status values:
+
+NOT_STARTED
+PLANNED
+IN_PROGRESS
+IMPLEMENTED_UNVERIFIED
+VERIFIED_MOCK
+VERIFIED_STATIC
+VERIFIED_WINDOWS
+VERIFIED_HARDWARE
+BLOCKED
+REGRESSION
+DEFERRED
+REMOVED
+
+---------------------------------------------------------------------
+OPEN BUG REGISTER
+---------------------------------------------------------------------
+
+Each bug must have a stable ID:
+
+BUG-0001
+Title:
+First found in run:
+Severity: CRITICAL | HIGH | MEDIUM | LOW | INFORMATIONAL
+Affected files/functions:
+Environment:
+Reproduction method:
+Expected result:
+Actual result:
+Evidence/error text:
+Root cause:
+Current status: OPEN | INVESTIGATING | FIXED_UNVERIFIED | FIXED_VERIFIED | DEFERRED | CANNOT_REPRODUCE
+Fix description:
+Regression test:
+Verification result:
+Remaining risk:
+
+Do not reuse bug IDs.
+Do not delete closed bugs.
+
+---------------------------------------------------------------------
+TEST INVENTORY
+---------------------------------------------------------------------
+
+Each test must have a stable ID:
+
+TEST-0001
+Name:
+Purpose:
+Type: STATIC | HEADLESS | MOCK | GUI | WINDOWS | NETWORK | HARDWARE | SECURITY | REGRESSION
+Command or method:
+Preconditions:
+Inputs:
+Expected result:
+Actual result:
+Status: PASS | FAIL | BLOCKED | NOT_RUN
+Date/time:
+Environment:
+Evidence/output summary:
+Related bugs:
+
+Record the method, not only “test passed.”
+
+---------------------------------------------------------------------
+DEPENDENCY AND CAPABILITY STATUS
+---------------------------------------------------------------------
+
+Record:
+
+- Python version;
+- Windows version when known;
+- Tk version;
+- Pillow availability/version;
+- OpenCV availability/version;
+- python-vlc availability/version;
+- libVLC availability/version;
+- ONVIF CLI name/path/version;
+- BAT native-Windows execution status;
+- WS-Discovery implementation status;
+- snapshot backend status;
+- RTSP backend status;
+- optional modules missing;
+- fallback behavior;
+- file-write permission;
+- diagnostics path status.
+
+---------------------------------------------------------------------
+RUN HISTORY
+---------------------------------------------------------------------
+
+Append one entry per run using this format:
+
+======================================================================
+RUN ID: RUN-YYYYMMDD-HHMMSS-UTC
+======================================================================
+
+Start time UTC:
+End time UTC:
+Execution environment:
+Claude conversation continuation:
+Starting checkpoint/archive:
+Starting application version:
+Ending application version:
+Run objective:
+
+FILES INSPECTED:
+- path | bytes | lines | modified timestamp
+
+FILES CREATED:
+- path | purpose | bytes | lines
+
+FILES MODIFIED:
+- path
+  - exact modification 1
+  - exact modification 2
+  - affected classes/functions/config sections
+  - backward-compatibility impact
+
+FILES DELETED:
+- path | reason
+
+FEATURES COMPLETED:
+[x] ...
+
+FEATURES PARTIALLY COMPLETED:
+[~] ...
+
+FEATURES NOT COMPLETED:
+[ ] ...
+
+BUGS FOUND:
+- BUG-ID | title | severity | evidence
+
+BUGS FIXED:
+- BUG-ID | fix | verification test
+
+BUGS STILL OPEN:
+- BUG-ID | reason | next action
+
+TESTS EXECUTED:
+- TEST-ID | command/method | PASS/FAIL/BLOCKED | concise result
+
+TESTS NOT EXECUTED:
+- TEST-ID | reason
+
+SECURITY/PRIVACY CHECKS:
+- credentials scan result
+- logs/report redaction result
+- unrestricted scan check
+- dry-run movement protection result
+
+REGRESSION CHECKS:
+- patrol
+- worker isolation
+- Emergency Stop
+- discovery
+- config backup/save
+- mock mode
+- GUI responsiveness
+
+ARTIFACTS CREATED:
+- filename | purpose | size | SHA-256 if practical
+
+KNOWN LIMITATIONS AFTER THIS RUN:
+- ...
+
+EXACT NEXT ACTION:
+1. file
+2. class/function/section
+3. intended modification
+4. required validation command
+
+CLEAN STOP STATUS:
+- Python syntax valid: YES/NO
+- py_compile: PASS/FAIL/NOT_RUN
+- checkpoint created: YES/NO
+- safe to continue: YES/NO
+
+END OF RUN ENTRY
+
+==================================================
+4. POPULATE THE LEDGER FROM EXISTING EVIDENCE
+==================================================
+
+Reconstruct the initial ledger from actual source inspection and the known project history.
+
+At minimum document these historical milestones when confirmed by files or prior test evidence:
+
+- compact single-file Tkinter architecture;
+- config parser and atomic backup/save;
+- rotating/redacted logging;
+- BAT command bridge;
+- mock cameras;
+- independent CameraWorker threads;
+- PriorityQueue command serialization;
+- patrol start/pause/resume/stop;
+- Test One Cycle;
+- Emergency Stop;
+- 4 x 2 status grid;
+- discovery engine work;
+- discovery GUI integration;
+- stable device identity and duplicate merging;
+- read-only diagnostics;
+- environment/capability reporting, if present;
+- live video/overlay work, if present;
+- execution number work, if present;
+- QoL templates and loop modes, if present;
+- position reading/saving, if present;
+- speed-control features, if present.
+
+Do not call a historical feature verified merely because it was discussed.
+
+Use these distinctions:
+
+- implemented in source;
+- statically verified;
+- mock verified;
+- Windows verified;
+- real-camera verified.
+
+If evidence is missing, mark IMPLEMENTED_UNVERIFIED or PLANNED.
+
+==================================================
+5. INTEGRATE LEDGER UPDATES INTO NORMAL DEVELOPMENT
+==================================================
+
+Add internal helper functions to ptz_patrol_gui.py only where useful, without overcomplicating the application:
+
+- append_progress_log_entry(...)
+- record_bug(...)
+- record_test_result(...)
+- write_environment_capability_report(...)
+- sanitize_progress_text(...)
+
+The application does not need to rewrite the whole ledger automatically.
+
+Recommended behavior:
+
+- startup diagnostics may append a small machine-generated section or separate runtime summary;
+- development-run entries remain written by the development process;
+- GUI may provide “Open Progress Log” and “Open Diagnostics Folder” buttons;
+- GUI may show the current application version and last verified checkpoint;
+- reports must be sanitized before writing.
+
+Do not let a ledger-write failure stop patrol operation.
+
+If PROJECT_PROGRESS_LOG.txt is missing:
+
+- recreate a minimal safe file;
+- warn the user;
+- continue running.
+
+If PROJECT_PROGRESS_LOG.txt is read-only:
+
+- log the problem;
+- show a non-fatal warning;
+- continue the controller.
+
+==================================================
+6. CONTINUE THE CURRENT LIVE/QOL DEVELOPMENT
+==================================================
+
+After the ledger exists and the current state is documented, continue the existing unfinished development.
+
+Preserve current working discovery features.
+
+Continue in this priority order:
+
+1. Finish discovery GUI and confirmed-camera config addition.
+2. Finish persistent environment/camera capability reports.
+3. Finish optional live video modes.
+4. Finish status text overlay.
+5. Finish beginner “What Needs Attention?” guidance.
+6. Finish patrol execution numbers.
+7. Finish automatic wait/speed/timing defaults.
+8. Finish office-fan patrol templates.
+9. Finish loop modes including PING_PONG.
+10. Finish per-camera/per-step speed controls.
+11. Finish READ POSITION / SAVE VIEW capability logic.
+12. Complete regression tests and packaging.
+
+Do not begin a later item while an earlier item is syntactically incomplete or failing its available tests.
+
+==================================================
+7. LIVE VIDEO AND STATUS OVERLAY REQUIREMENTS
+==================================================
+
+Video modes:
+
+OFF
+SNAPSHOT
+LOW_FPS
+LIVE_SELECTED
+
+Default OFF.
+
+Continuous preview defaults to selected camera only.
+
+Overlay must show where available:
+
+- camera name;
+- stable ID;
+- IP:port;
+- connection state;
+- worker state;
+- execution number;
+- current step/total;
+- action;
+- target;
+- move/settle/dwell countdown;
+- next action;
+- loop mode;
+- current speed;
+- manual override;
+- recovery attempt;
+- preview mode/backend;
+- measured frame rate;
+- resolution;
+- bitrate when known;
+- dropped/late frames;
+- decoder delay;
+- last warning/error;
+- mock/dry-run state;
+- actionable fix summary.
+
+Never overlay secrets.
+
+Use latest-frame-only buffering.
+
+Preview failure must not stop patrol.
+
+Patrol failure must not freeze preview.
+
+==================================================
+8. BEGINNER QUALITY-OF-LIFE REQUIREMENTS
+==================================================
+
+Add BEGINNER and ADVANCED modes without data loss.
+
+Beginner mode:
+
+- plain-language actions;
+- guided camera setup;
+- safe defaults;
+- patrol templates;
+- Slow/Normal/Fast/Custom speeds;
+- automatic WAIT recommendation;
+- “What Needs Attention?” panel;
+- Fix/Open Config/Open Diagnostics actions;
+- hide raw CLI/SOAP details.
+
+Advanced mode:
+
+- raw execution numbers;
+- PTZ values;
+- speed vectors;
+- coordinate spaces;
+- exact move/settle/dwell values;
+- CLI templates;
+- technical capability flags.
+
+==================================================
+9. EXECUTION ORDER AND DEFAULT VALUES
+==================================================
+
+Every patrol step must have a unique positive execution number.
+
+Execution number is authoritative.
+
+Allow gaps such as:
+
+10, 20, 30, 40
+
+Provide:
+
+- validation;
+- duplicate rejection;
+- renumber command;
+- insertion between numbers;
+- migration from legacy row order;
+- execution number in status overlay and reports.
+
+Missing values inherit safe defaults.
+
+Track value source:
+
+EXPLICIT
+CAMERA_DEFAULT
+APPLICATION_DEFAULT
+AUTOMATICALLY_INSERTED
+
+When adjacent movement positions lack observation time:
+
+- warn;
+- offer Insert Recommended Wait;
+- optionally auto-insert only when configured;
+- show every inserted step before saving.
+
+==================================================
+10. OFFICE-FAN AND LOOP MODES
+==================================================
+
+Templates:
+
+CUSTOM
+TWO_POSITION_FAN
+THREE_POSITION_FAN
+FOUR_POSITION_SCAN
+MAIN_WITH_BLIND_SPOTS
+SLOW_PAN_LEFT_RIGHT
+CAMERA_PRESET_TOUR
+
+Loop modes:
+
+OFF
+ONCE
+FIXED_COUNT
+FOREVER
+PING_PONG
+RANDOM_SAFE
+SCHEDULED_WINDOW
+
+PING_PONG examples:
+
+Two positions:
+1 → 2 → 1 → 2
+
+Four positions:
+1 → 2 → 3 → 4 → 3 → 2 → repeat
+
+Do not duplicate endpoints immediately.
+
+Every generated sequence includes execution number, speed source, move timeout, settle, dwell, safe Stop behavior and repeat mode.
+
+==================================================
+11. POSITION AND SPEED REQUIREMENTS
+==================================================
+
+READ POSITION / SAVE VIEW capability order:
+
+1. valid GetStatus coordinates + AbsoluteMove;
+2. camera SetPreset/GotoPreset;
+3. RelativeMove for fine adjustment only;
+4. bounded ContinuousMove without fabricated coordinates;
+5. disable with explanation.
+
+Per-camera speed defaults and per-step overrides must be capability aware.
+
+Do not send unsupported preset-speed fields.
+
+Fine adjustment must be bounded and interruptible by Emergency Stop.
+
+Dry-run may read status but must block movement and camera-side preset changes.
+
+==================================================
+12. BUG TRACKING RULES
+==================================================
+
+Every discovered defect receives the next stable BUG ID.
+
+A bug cannot be marked FIXED_VERIFIED unless a named regression test or reproducible manual method passes.
+
+When a bug is fixed:
+
+1. record root cause;
+2. record exact changed function/file;
+3. add or identify a regression test;
+4. execute the test;
+5. record actual result;
+6. record remaining risk.
+
+If the bug cannot be reproduced, preserve evidence and mark CANNOT_REPRODUCE, not fixed.
+
+If the run ends before a fix is verified, mark FIXED_UNVERIFIED.
+
+==================================================
+13. TEST DOCUMENTATION RULES
+==================================================
+
+For every test run, record:
+
+- stable TEST ID;
+- command or exact method;
+- environment;
+- preconditions;
+- test input;
+- expected result;
+- actual result;
+- PASS/FAIL/BLOCKED;
+- concise stdout/stderr summary;
+- related bug IDs;
+- timestamp.
+
+Required commands where implemented:
+
+python3 -m py_compile ptz_patrol_gui.py
+python3 -m pyflakes ptz_patrol_gui.py
+python3 ptz_patrol_gui.py --version
+python3 ptz_patrol_gui.py --check-config
+python3 ptz_patrol_gui.py --diagnose
+python3 ptz_patrol_gui.py --mock-test
+python3 ptz_patrol_gui.py --discovery-mock-test
+python3 ptz_patrol_gui.py --check-device-profiles
+python3 ptz_patrol_gui.py --video-overlay-mock-test
+python3 ptz_patrol_gui.py --qol-patrol-test
+python3 ptz_patrol_gui.py --dependency-report-test
+python3 ptz_patrol_gui.py --loop-mode-test
+python3 ptz_patrol_gui.py --position-mock-test
+python3 ptz_patrol_gui.py --check-optional-backends
+
+Do not claim Windows BAT, real RTSP, real ONVIF multicast or physical camera tests were performed unless actually performed.
+
+Record unavailable tests as BLOCKED with reason.
+
+==================================================
+14. CHANGE DOCUMENTATION PER MODIFIED FILE
+==================================================
+
+For every modified file, append to the current RUN entry:
+
+- file path;
+- original size/line count;
+- new size/line count;
+- classes/functions/sections changed;
+- user-visible effect;
+- config compatibility effect;
+- security effect;
+- tests validating the change.
+
+For config.txt changes, also record:
+
+- sections added;
+- keys added;
+- default values;
+- migration behavior;
+- backup filename;
+- parser validation result.
+
+For requirements.txt changes, record:
+
+- dependency added/removed;
+- mandatory/optional;
+- purpose;
+- version constraint;
+- license note;
+- fallback when absent.
+
+==================================================
+15. RUN-LIMIT CHECKPOINT RULE
+==================================================
+
+If token/execution capacity approaches the limit:
+
+1. finish the current function/class;
+2. save all files;
+3. ensure PROJECT_PROGRESS_LOG.txt has the current run entry;
+4. run py_compile;
+5. run all currently complete relevant tests;
+6. create:
+
+PTZ_Patrol_Controller_LEDGER_CONTINUATION_CHECKPOINT.zip
+
+7. create or update:
+
+CONTINUATION_STATUS.txt
+
+CONTINUATION_STATUS.txt must summarize and point to PROJECT_PROGRESS_LOG.txt, but the detailed authoritative history remains in PROJECT_PROGRESS_LOG.txt.
+
+8. Present direct download links.
+9. State:
+
+CLEAN LEDGER CHECKPOINT CREATED
+
+Never leave syntactically incomplete Python.
+Never stop without appending the run ledger.
+
+==================================================
+16. VERSIONING
+==================================================
+
+Use a visible application version.
+
+Increment version only when justified:
+
+- patch: bug fixes/internal corrections;
+- minor: new backward-compatible feature;
+- major: breaking config/behavior change.
+
+Record version changes in PROJECT_PROGRESS_LOG.txt and README.md.
+
+Do not call a build stable or final without clear evidence.
+
+Suggested labels:
+
+DEVELOPMENT
+MOCK_VERIFIED
+STATIC_VERIFIED
+WINDOWS_VERIFIED
+HARDWARE_TEST_PENDING
+HARDWARE_VERIFIED
+
+==================================================
+17. PACKAGING
+==================================================
+
+Every checkpoint ZIP and final ZIP must include:
+
+PTZ_Patrol_Controller/
+├── ptz_patrol_gui.py
+├── ptz_commands.bat
+├── config.txt
+├── requirements.txt
+├── README.md
+└── PROJECT_PROGRESS_LOG.txt
+
+Exclude:
+
+- credentials;
+- logs with secrets;
+- runtime locks/PID files;
+- virtual environments;
+- __pycache__;
+- .pyc;
+- proprietary SDK binaries;
+- VLC/FFmpeg binaries;
+- previous ZIP files.
+
+When this upgrade is complete, create:
+
+PTZ_Patrol_Controller_TRACKED_LIVE_QOL_UPGRADE.zip
+
+Provide direct download links to all six files and the final ZIP.
+
+==================================================
+18. FINAL RESPONSE FORMAT
+==================================================
+
+Keep prose short and prioritize evidence/artifacts.
+
+Return:
+
+1. Initial actual-state checklist.
+2. Backup link.
+3. PROJECT_PROGRESS_LOG.txt direct link.
+4. Current run ID.
+5. Files modified and concise changes.
+6. Bugs found/fixed/open with BUG IDs.
+7. Tests run with TEST IDs and results.
+8. Features completed/partial/missing.
+9. Honest blocked/untested items.
+10. Final or checkpoint status.
+11. Direct links to all artifacts.
+12. Exact next Windows commands.
+
+If fully complete, state:
+
+TRACKED LIVE/QOL UPGRADE COMPLETE
+
+If not complete, state:
+
+CLEAN LEDGER CHECKPOINT CREATED
+
+Do not ask for approval.
+Do not return only a plan.
+Do not erase development history.
+Do not claim unexecuted tests.
+Continue from the exact current project state now.

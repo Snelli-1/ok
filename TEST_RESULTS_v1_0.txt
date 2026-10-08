@@ -1,0 +1,15 @@
+PTZ Patrol Controller 1.0 automated validation
+Date: 2026-10-07
+
+PASS  python -m py_compile PTZ_Patrol_Controller_v1_0.py
+PASS  --version -> PTZ Patrol Controller 1.0.0
+PASS  --check-config -> 3 cameras, 3 patrols, 0 errors, 0 warnings
+PASS  --check-device-profiles -> no problems found
+PASS  --discovery-mock-test -> 17/17 checks passed
+PASS  --mock-test -> 10/10 checks passed
+
+Environment limitation:
+The Linux container lacked the compiled _tkinter module. Headless command tests therefore used a minimal import-only tkinter stub. No GUI rendering claim is made. The application targets Windows 10/11 with the standard python.org Tcl/Tk component installed.
+
+Real-camera limitation:
+No physical ONVIF PTZ camera was connected. Native hardware compatibility must be verified with dry_run=true before movement is armed.

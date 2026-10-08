@@ -1,0 +1,737 @@
+WINDOWS PTZ PATROL CONTROLLER
+LINEAGE-AWARE GENERATION, MERGE, TEST AND RELEASE MASTER PROMPT
+================================================================
+
+ROLE
+----
+You are taking over a mature Windows PTZ Patrol Controller project that evolved through many separate versions, experiments, real-camera tests, diagnostic tools, partial rebuilds and GUI redesigns.
+
+Your job is NOT to create a new project, choose the newest-looking source, or continue one branch blindly.
+
+Your job is to reconstruct, continue and finish the ONE intended application by comparing every relevant version, understanding which problem each version solved, preserving the verified solution from each branch, rejecting regressions and placeholders, then merging the correct implementations into the current checkpoint architecture.
+
+Do not optimize for a quick-looking result. Optimize for functional continuity, truthful hardware behavior, regression prevention, traceability and a complete Windows release.
+
+================================================================
+1. AUTHORITATIVE INPUTS AND THEIR DIFFERENT ROLES
+================================================================
+
+Treat the supplied materials as different forms of evidence. Do not assume that a single file contains the entire project.
+
+A. Current editing baseline
+- The newest explicitly identified checkpoint ZIP is the current editing baseline.
+- It defines the latest file layout and the state from which changes must be made.
+- It is NOT automatically the most functionally complete version.
+
+B. Development ledger
+- PROJECT_PROGRESS_LOG.txt records development history, test claims, bugs, limitations, checkpoints and EXACT NEXT ACTION.
+- Read the entire file before changing code.
+- The ledger is append-only. Never delete, rewrite or silently correct earlier entries.
+
+C. Continuation status
+- CONTINUATION_STATUS.txt identifies the latest known working state, unfinished work and handover point.
+
+D. Project origin and intended architecture
+- PTZ_PATROL_PROJECT_CONTEXT_HANDOVER_HU.txt explains the original use case, architecture, safety model and envisioned final product.
+- Historical design decisions in this file may have been superseded by later real-camera evidence.
+
+E. Development lineage and user intent
+- The full conversation beginning with the application-idea formulation is essential evidence.
+- Reconstruct the problem-solving sequence, not only the latest requested feature list.
+- Later explicit user requirements override older design choices when they conflict.
+
+F. Earlier versions
+- Every v1, v1.1, REAL v1.2, REAL v1.3, REAL v1.4.x, REAL v1.5, FULL v2.0, Unified v2.1 and later build is a feature-provenance source.
+- Compare them. Do not rank them only by version number.
+- A later version may contain regressions or may solve only one narrow problem.
+
+G. Tests and diagnostic logs
+- Real logs are hardware evidence.
+- Static tests prove only syntax, structure or packaging.
+- Simulated reports are not hardware evidence.
+- A claimed feature is not verified merely because code or a GUI control exists.
+
+================================================================
+2. THE CORE INTERPRETATION RULE
+================================================================
+
+The project is distributed across its development history.
+
+Do NOT use this false rule:
+
+    highest version number = complete project
+
+Use this rule instead:
+
+    original application purpose
+    + complete early product architecture
+    + verified real ONVIF communication
+    + verified physical PTZ movement
+    + safe bounded-pulse movement ownership
+    + calibrated software direction tracking
+    + multi-camera independent patrol
+    + video verification
+    + task-oriented tabbed usability
+    + discovery and diagnostic knowledge
+    - mock production behavior
+    - invented capabilities and presets
+    - placeholder success
+    - later regressions
+    = intended final application
+
+For every subsystem, determine independently which version contains the best verified implementation.
+
+The checkpoint is the integration target, not unquestionable proof that every newer implementation is better.
+
+================================================================
+3. RECONSTRUCT THE DEVELOPMENT LINEAGE BEFORE CODING
+================================================================
+
+Before editing code, produce a DEVELOPMENT_LINEAGE_AND_FEATURE_PROVENANCE report.
+
+For every available version or diagnostic milestone, record:
+
+- version or artifact name;
+- preceding problem;
+- user request that caused the change;
+- implementation introduced;
+- why the new behavior worked or appeared to work;
+- test method used;
+- actual result;
+- whether the result was static, Windows, network or physical-camera evidence;
+- functionality intentionally retained from the previous version;
+- functionality accidentally lost;
+- regressions introduced;
+- assumptions later disproved;
+- features that must survive into the final application;
+- features that must be removed.
+
+Reconstruct at least the following lineage.
+
+PHASE 0: APPLICATION IDEA
+- The application was conceived as a local Windows controller for repeatedly observing lower-priority blind spots with PTZ cameras.
+- The central requirement was not merely a camera viewer.
+- The important missing capability in general camera viewers was a user-editable continuous patrol with different observation durations at different positions.
+- The patrol was intended to resemble office-fan movement: main view for a long dwell, short blind-spot visit, return to main, visit the other blind spot, repeat.
+- This phase is the source of independent per-camera patrol, separate move/settle/dwell times, PING_PONG behavior and office-fan templates.
+
+PHASE 1: COMPLETE APPLICATION FRAMEWORK
+- The early large v1 branch established the complete product architecture: Tkinter GUI, camera list, configuration, discovery, diagnostics, patrol editor, worker threads, command queues, Emergency Stop, preview, logging and config persistence.
+- Preserve this product breadth.
+- Do not automatically preserve its unverified camera backend, mock behavior or invented capabilities.
+
+PHASE 2: MOCK/DRY-RUN SCAFFOLD
+- Mock and dry-run behavior originally existed to test the GUI, state machine and worker isolation without moving hardware.
+- This was useful only as early scaffolding.
+- Once real PTZ control existed, production mock fallback became misleading and should have been removed.
+- Do not erase this historical reason from the lineage report, but remove mock behavior from the final production application.
+
+PHASE 3: PLACEHOLDER FAILURE RECOGNITION
+- Multiple unverified generations mixed real behavior, placeholders, fake capabilities, invented presets and simulated success.
+- From this point onward, the project required evidence-driven development: test, inspect logs, modify, retest.
+
+PHASE 4: DEEP REAL-CAMERA ENUMERATION
+- The deep tests established real ONVIF Device, Media and PTZ endpoints and real profile/configuration/node tokens for the physical camera.
+- They disproved the assumption that the camera itself was fundamentally incompatible.
+- Preserve discovered endpoint and SOAP behavior as camera-specific compatibility knowledge, not hard-coded universal truth.
+
+PHASE 5: REAL v1.2 BASELINE
+- REAL v1.2 was the first user-confirmed physical PTZ control milestone.
+- Treat its real ONVIF request construction and movement path as the movement reference implementation unless later evidence proves a better implementation.
+- Preserve real endpoints, real tokens, SOAP compatibility and truthful failure behavior.
+- Do not restore dummy layers removed by this branch.
+
+PHASE 6: REAL v1.3 PATROL AND MULTI-CAMERA DIRECTION
+- This phase built continuous patrol, multi-camera control direction and radar concepts around the real PTZ baseline.
+- Preserve the problem it solved even if its GUI or position model was incomplete.
+
+PHASE 7: POSITION FEEDBACK DISPROVED
+- GetStatus requests returned structurally valid but non-changing position values.
+- Therefore the radar cannot claim measured camera direction from those values.
+- Preserve GetStatus as diagnostics, but mark unreliable position data correctly.
+- Software direction tracking must be ESTIMATED unless independently verified.
+
+PHASE 8: PHYSICAL STEP CALIBRATION
+- User measurement established approximately 26 bounded clicks for 180 degrees of pan, approximately 52 clicks for 360 degrees, and approximately 6.923 degrees per click under the tested speed and pulse-duration profile.
+- This is calibration evidence, not a universal constant.
+- Default pan limits of -26 steps and +26 steps come from this measured half-turn model.
+- Calibration must be tied to camera, axis, speed and pulse duration.
+
+PHASE 9: BOOT-CALIBRATION MONITOR
+- The camera's mechanical startup calibration was tested.
+- Network and ONVIF service interruption were observable, but useful ONVIF position changes were not.
+- Therefore startup mechanical calibration cannot be treated as an absolute software position source.
+
+PHASE 10: READ-ONLY REQUEST MATRICES AND MAXIMUM ENUMERATION
+- SOAP variants, endpoints, services, profiles, PTZ, Media, Media2, Imaging, Events, RTSP and selected ports were tested.
+- Preserve proven protocol compatibility and response parsing.
+- Treat these tools as diagnostic knowledge feeding the integrated Diagnostics tab, not as disconnected replacements for the main application.
+
+PHASE 11: BOUNDED-PULSE MOVEMENT OWNERSHIP
+- Safe movement was changed to finite ContinuousMove pulses followed by explicit Stop.
+- Hard limits are checked before sending movement.
+- Estimated counters change only after confirmed Move and Stop success.
+- Stop failure causes UNSYNCED.
+- Mouse hold, keyboard hold, focus loss, camera switching, Pause, Emergency Stop and clean shutdown must use this same movement-ownership model.
+
+PHASE 12: REAL v1.5 OPERATIONAL PTZ MODEL
+- This phase added pulse duration, pulse gap, Pan/Tilt speed, Zoom speed, step targets, per-camera limits, diagonal step planning, radar and calibration dependence.
+- Preserve these operational concepts and integrate them into the complete application.
+
+PHASE 13: VIDEO REINTRODUCTION
+- Video was initially optional if direction could be known reliably.
+- Once firmware position feedback proved unreliable and simulated behavior had masked missing functions, selected-camera video became an independent physical verification channel.
+- Video must not be the camera-selection mechanism, but it must be available to verify real orientation and movement.
+
+PHASE 14: FULL v2.0 INTEGRATION
+- This phase attempted to recombine the broad v1 feature set with real/video improvements.
+- Preserve the integration goal and video capabilities.
+- Audit carefully for accidental restoration of old mock or backend behavior.
+
+PHASE 15: UNIFIED v2.1 USABILITY
+- The one-page UI had become too crowded.
+- Task-oriented tabs were introduced to make the complete feature set usable.
+- Preserve the tabbed organization even if specific v2.1 internals require correction.
+
+PHASE 16: LATER DASHBOARD REGRESSION
+- A later dashboard build used an older one-page source as its base and added radar/video visually.
+- It looked like v1+, but lost tab navigation and later usability/functionality improvements.
+- Do not use this build as the sole base.
+- Preserve useful radar/video layout ideas only after reintegrating them into the complete tabbed application.
+
+Do not begin the final merge until this lineage report is complete enough to explain why every major retained subsystem exists.
+
+================================================================
+4. REQUIRED COMPARATIVE AUDIT
+================================================================
+
+Extract every supplied release into a separate read-only audit directory.
+
+Create these reports before modifying the checkpoint:
+
+1. VERSION_INVENTORY.txt
+2. DEVELOPMENT_LINEAGE_AND_FEATURE_PROVENANCE.txt
+3. FEATURE_RETENTION_MATRIX.txt
+4. REGRESSION_MATRIX.txt
+5. TEST_EVIDENCE_MATRIX.txt
+6. MERGE_DECISION_LOG.txt
+7. BASELINE_TEST_RESULTS.txt
+
+For each feature, compare all versions that contain it.
+
+Required feature groups:
+- application architecture;
+- camera configuration;
+- real ONVIF transport;
+- SOAP version and action handling;
+- real profile and PTZ token retrieval;
+- manual PTZ;
+- Stop behavior;
+- bounded pulse;
+- hard limits;
+- software position estimate;
+- calibration;
+- radar;
+- multi-camera workers;
+- patrol state machine;
+- EXEC ordering;
+- PING_PONG;
+- office-fan templates;
+- automatic wait guidance;
+- selected-camera video;
+- multiview;
+- stream URI discovery;
+- discovery;
+- diagnostics;
+- presets and named views;
+- logs and reports;
+- GUI layout;
+- tabs;
+- active-camera selection;
+- configuration migration;
+- mock/dry-run production paths;
+- shutdown and resource release.
+
+For every feature, select one status:
+- RETAIN_CURRENT;
+- RESTORE_FROM_VERSION;
+- MERGE_MULTIPLE_VERSIONS;
+- REIMPLEMENT_FROM_VERIFIED_BEHAVIOR;
+- REMOVE_PLACEHOLDER;
+- REMOVE_REGRESSION;
+- DEFER_WITH_REASON.
+
+Every selection must include:
+- source version or versions;
+- reason;
+- evidence;
+- dependencies;
+- regression risk;
+- required tests.
+
+================================================================
+5. CONFLICT RESOLUTION RULES
+================================================================
+
+When versions conflict, use this priority order:
+
+1. User-confirmed physical behavior.
+2. Real hardware/network logs.
+3. Later explicit user correction.
+4. Windows runtime evidence.
+5. Targeted integration tests.
+6. Static tests.
+7. Source presence without execution.
+8. Design intention.
+9. Simulated behavior.
+
+A prettier or newer implementation must not replace an older physically verified implementation unless the newer implementation passes equivalent or stronger tests.
+
+A feature must not be considered retained merely because a similarly named button exists.
+
+Compare complete behavior:
+- input;
+- command path;
+- worker ownership;
+- hardware call;
+- response handling;
+- state update;
+- GUI feedback;
+- error case;
+- shutdown behavior.
+
+If a later version contains only a wrapper, placeholder or visual shell, restore the last verified functional implementation behind it.
+
+================================================================
+6. FINAL ARCHITECTURE TO PRESERVE
+================================================================
+
+Keep the established main architecture:
+
+- one large, well-structured ptz_patrol_gui.py;
+- one ptz_commands.bat;
+- one config.txt;
+- requirements.txt;
+- README.md;
+- append-only PROJECT_PROGRESS_LOG.txt.
+
+Runtime directories may include:
+- diagnostics/;
+- logs/;
+- runtime/.
+
+Do not split the application into many new Python modules.
+
+Diagnostic knowledge from earlier standalone tools should be integrated into the main file where appropriate, while retaining safe standalone test artifacts only when they provide genuine Windows/hardware validation value.
+
+Return complete files, never fragment patches.
+
+================================================================
+7. FINAL PRODUCTION FEATURE SET
+================================================================
+
+A. GLOBAL SHELL
+- Professional Windows Tkinter/ttk interface.
+- Task-oriented tabs.
+- Active Camera block always visible outside tabs.
+- Global connection status always visible.
+- Global Emergency Stop always visible.
+- Main status bar always visible.
+- Beginner and Advanced views without data loss.
+- Responsive resizing, scrollable/adjustable panels and no clipped controls.
+
+Required tabs:
+1. DASHBOARD
+2. LIVE VIEW
+3. PTZ CONTROL
+4. PATROL & AUTOMATION
+5. DISCOVERY
+6. CAMERA SETUP
+7. DIAGNOSTICS
+8. LOGS & REPORTS
+9. SETTINGS
+10. optional ADVANCED TOOLS for real production diagnostics only
+
+B. ACTIVE CAMERA SELECTION
+- Double-click must not be required.
+- Single-click selection or a clear Activate Camera button.
+- Global camera selector.
+- Active row/card highlighting.
+- Display camera name, stable ID, host, ONVIF port, connection state, video state and PTZ command target immediately.
+- Selection must be visible before video loads.
+- PTZ, radar, patrol editor, calibration and video must always target the same selected camera.
+- No selected camera means movement controls are disabled.
+- Switching camera stops held movement and releases the old video decoder.
+
+C. REAL PTZ CONTROL
+- Up, Down, Left, Right and safe diagonals.
+- STOP, Home, Zoom In, Zoom Out and Zoom Stop.
+- Mouse-hold and keyboard-hold operation.
+- Finite ContinuousMove pulses.
+- Explicit Stop after every pulse.
+- Per-camera Pan, Tilt and Zoom speed.
+- Pulse duration in ms.
+- Pulse gap in ms.
+- Slow, Normal, Fast and Custom profiles.
+- Hard-limit check before network transmission.
+- Estimated counters update only after confirmed Move and Stop.
+- Stop failure causes UNSYNCED.
+- Focus loss, Pause, camera switching, Emergency Stop and shutdown use the same safe stop path.
+- Unsupported controls are disabled from real capability results.
+- Command feedback must distinguish NOT SENT, SENT, ACCEPTED, COMPLETED, REJECTED, TIMEOUT and FAILED.
+
+D. RADAR, LIMITS AND CALIBRATION
+- Camera-specific Pan and Tilt integer step tracking.
+- Default Pan limit: -26 steps to +26 steps.
+- Default Tilt range may begin at -26 steps to +26 steps but must remain independently configurable and must not be claimed as physically verified without calibration.
+- Display remaining steps in each direction.
+- Reliability state: MEASURED, CALIBRATED_ESTIMATE, ESTIMATED or UNSYNCED.
+- Radar top represents display forward / 0 direction by default.
+- Display forward and mechanical/calibration zero are separate settings.
+- Do not let one overwrite the other automatically.
+- Provide Set current as calibration zero, Set current as display forward, Reset estimate, Calibrate limits, Mark UNSYNCED and Resync actions.
+- Calibration profile includes camera ID, axis, speed, pulse duration and date.
+- Speed or pulse-duration change invalidates the matching calibration.
+- Pulse-gap-only change does not automatically invalidate calibration.
+- Never label software estimates as measured ONVIF coordinates.
+
+E. PATROL AND AUTOMATION
+- Independent patrol process per enabled camera.
+- Stable EXEC values such as 10, 20, 30 and 40.
+- Execution follows EXEC, not visual row position alone.
+- Operations: GOTO_PRESET, WAIT, STEP_MOVE, bounded CONTINUOUS_MOVE, STOP, GOTO_HOME, verified ABSOLUTE_MOVE, verified RELATIVE_MOVE, SNAPSHOT and READ POSITION / SAVE VIEW.
+- Step fields: enabled, EXEC, action, target, Pan steps, Tilt steps, Zoom, move timeout, settle time, dwell time, pulse duration, pulse gap, Pan speed, Tilt speed, Zoom speed and value source.
+- Value source: EXPLICIT, CAMERA_DEFAULT, APPLICATION_DEFAULT or AUTOMATICALLY_INSERTED.
+- Warn when movement steps have no meaningful observation dwell.
+- Provide Insert Recommended Wait.
+- Support Add, Edit, Delete, Reorder, Save, Load and Test One Cycle.
+- Support ONCE, FIXED_COUNT, FOREVER and PING_PONG.
+- PING_PONG must not duplicate endpoints consecutively.
+- Preserve office-fan templates: TWO_POSITION_FAN, THREE_POSITION_FAN, FOUR_POSITION_SCAN, MAIN_WITH_BLIND_SPOTS, SLOW_PAN_LEFT_RIGHT, CAMERA_PRESET_TOUR and CUSTOM.
+
+F. VIDEO
+- Default to one selected-camera live stream.
+- Camera selection must not depend on video startup.
+- Preserve aspect ratio with black letterbox.
+- Correct dynamic resizing.
+- Latest-frame-only buffering.
+- Clean decoder release on switch and shutdown.
+- Snapshot, reconnect and optional fullscreen.
+- Display masked URI, backend, resolution in px, frame rate in frame/s, codec, bitrate, latency in ms, dropped frames, reconnect count and last frame time when available.
+- URI priority: configured URI, ONVIF Media1, ONVIF Media2, verified limited compatibility candidates, user-supplied URI, then truthful VIDEO ERROR.
+- Backend priority: FFmpeg, OpenCV, VLC/libVLC, snapshot fallback, status-only fallback.
+- Video failure must not stop patrol.
+- Patrol failure must not freeze video.
+- Multiview is optional and must create tiles only for real configured cameras.
+
+G. CAMERA SETUP
+- Add, edit, delete, enable and disable cameras.
+- Name, stable ID, host, ONVIF port, RTSP port, protocol, profile token, PTZ configuration token, main/sub stream URI, snapshot URI and per-camera tuning.
+- Atomic config save and backup.
+- Preserve comments and ordering where possible.
+- Remove outdated demo-camera defaults from production configuration.
+- Do not hard-code the known camera as a universal assumption.
+
+H. DISCOVERY
+- Windows IPv4 adapters.
+- User-approved local subnets.
+- WS-Discovery, EndpointReference, Types, Scopes and XAddr.
+- ARP and MAC support.
+- Ping only as secondary evidence.
+- QUICK, STANDARD and confirmed EXTENDED modes.
+- Cancellation, concurrency limit and rate limit.
+- Stable device identity and deduplication.
+- Read-only ONVIF validation.
+- User approval before adding or changing config.
+- No brute force, password lists, public-internet scanning, unrestricted port scan, firmware change, reboot, reset, user creation, router modification or firewall modification.
+
+I. DIAGNOSTICS
+- Integrate knowledge from deep test, boot monitor, request matrix, forceful read-only and maximum enumerator.
+- Environment, startup, discovery, per-camera capability, PTZ, Media, video and patrol reports.
+- GetDeviceInformation, GetServices, Media1, Media2, GetProfiles, GetStreamUri, PTZ nodes/configurations/options, GetStatus, GetPresets, coordinate spaces and movement capabilities.
+- Credential redaction everywhere.
+- Every error must state what failed, likely cause, affected feature, whether operation can continue safely, corrective action, config key and report to inspect.
+
+J. PRESETS AND SAVED VIEWS
+- READ POSITION / SAVE VIEW workflow.
+- Use capability tiers:
+  1. real GetStatus plus verified AbsoluteMove;
+  2. camera SetPreset/GotoPreset;
+  3. RelativeMove for adjustment only;
+  4. ContinuousMove as ESTIMATED only;
+  5. disabled with explanation when no safe method exists.
+- Saved view fields include ID, name, source, profile token, preset token, Pan, Tilt, Zoom, coordinate-space URI, timestamps, reliability, notes and optional snapshot.
+- Do not move coordinates between incompatible cameras/spaces.
+
+K. THREADING AND SAFETY
+- One CameraWorker per camera.
+- Commands serialized per camera.
+- Different cameras may operate concurrently.
+- GUI thread performs no network calls, blocking BAT calls or video decoding.
+- Use thread-safe queues and root.after() UI updates.
+- All waits are interruptible.
+- Emergency Stop has highest priority.
+- Cleanly stop workers, decoders and subprocesses.
+- Required states include DISCONNECTED, CONNECTING, IDLE, MOVING, SETTLING, DWELLING, PAUSED, MANUAL_OVERRIDE, RECOVERING, STOPPING, ERROR and UNSYNCED.
+
+================================================================
+8. REMOVE PRODUCTION MOCK AND FALSE SUCCESS
+================================================================
+
+Remove from the final production application:
+- MockCameraBridge;
+- mock profiles;
+- mock_mode;
+- mock cameras;
+- mock CLI commands;
+- mock laboratory;
+- simulated capability probes;
+- invented presets;
+- generated fake positions;
+- automatic fallback to simulation;
+- any dry-run path that looks like successful hardware execution.
+
+Remove them from:
+- code;
+- command-line parser;
+- config schema;
+- UI;
+- status text;
+- documentation;
+- release artifacts.
+
+Provide safe migration for old configs containing removed keys.
+
+Isolated test doubles may remain only inside clearly separated test code. They must never appear as production cameras or count as hardware success.
+
+Use truthful states such as DISCONNECTED, AUTHENTICATION ERROR, CAPABILITY UNKNOWN, COMMAND NOT SENT, COMMAND FAILED, VIDEO ERROR and UNSYNCED.
+
+================================================================
+9. BASELINE, GENERATION AND TEST LOOP
+================================================================
+
+Do not make all changes at once without validation.
+
+A. Before-change baseline
+1. Back up the untouched checkpoint.
+2. Generate SHA-256 hashes.
+3. Run every existing test.
+4. Record exact environment and results.
+5. Mark unrun Windows/network/hardware tests honestly.
+
+B. Iterative merge loop
+For each coherent feature group:
+1. Identify the best source implementation from the provenance matrix.
+2. List dependencies and conflicts.
+3. Integrate into the checkpoint architecture.
+4. Run syntax, AST, import and config tests.
+5. Run targeted tests.
+6. Run regression tests for retained features.
+7. Search for forbidden mock paths and credential leakage.
+8. Compare behavior with the source version that originally solved the problem.
+9. Append results to the ledger.
+10. Continue only after the checkpoint is internally consistent.
+
+Suggested integration order:
+1. configuration model and migration;
+2. real ONVIF compatibility layer;
+3. CameraWorker ownership and Stop path;
+4. bounded pulse and limits;
+5. active-camera model;
+6. tabbed GUI shell;
+7. PTZ Control tab;
+8. radar and calibration;
+9. patrol and EXEC model;
+10. PING_PONG and office-fan templates;
+11. selected-camera video;
+12. camera setup;
+13. discovery;
+14. diagnostics;
+15. saved views/presets;
+16. reports and settings;
+17. lifecycle and shutdown;
+18. packaging and Windows validation.
+
+C. Mandatory static and logic tests
+- py_compile;
+- AST parse;
+- import smoke test;
+- config load/save round trip;
+- old config migration;
+- mock-production-token audit;
+- credential-redaction audit;
+- active-camera target consistency;
+- worker ownership;
+- bounded pulse: Move then Stop;
+- hard-limit rejection before network call;
+- failed Stop to UNSYNCED;
+- calibration invalidation on speed/duration change;
+- no invalidation on gap-only change;
+- EXEC sorting;
+- PING_PONG two-point and multi-point endpoint handling;
+- office-fan template generation;
+- pause/resume/stop state transitions;
+- camera-switch lifecycle;
+- latest-frame-only buffer;
+- decoder release;
+- clean shutdown;
+- ZIP integrity;
+- SHA-256 manifest verification.
+
+D. Environment truthfulness
+If the build environment cannot run native Tkinter, Windows BAT, multicast discovery, RTSP decoding or real-camera movement:
+- do not claim those tests passed;
+- mark them BLOCKED or NOT_RUN;
+- generate a Windows validation package and exact instructions;
+- limit the status to VERIFIED_STATIC.
+
+Never use simulated success to upgrade a feature to VERIFIED_WINDOWS, VERIFIED_NETWORK or VERIFIED_HARDWARE.
+
+================================================================
+10. REAL-CAMERA EVIDENCE TO PRESERVE
+================================================================
+
+Treat supplied logs as evidence, not decorative attachments.
+
+Known evidence to verify from the files includes:
+- the known physical camera responded through the ONVIF service on its tested network address and port;
+- real Device, Media, Media2, PTZ, Imaging and Event services were enumerated in later tests;
+- SOAP 1.2 was the compatible request direction;
+- SOAP 1.1 was not the preferred compatible path in the tested firmware;
+- real profiles and PTZ tokens were discovered;
+- GetStatus returned successful responses but position values did not provide useful changing physical orientation;
+- startup mechanical calibration did not become usable ONVIF position feedback;
+- RTSP OPTIONS responses do not by themselves prove successful authenticated video decoding;
+- simulated probe files must not be treated as hardware verification.
+
+Copy exact values only after reading and validating the corresponding supplied logs.
+Do not invent missing tokens, presets, capabilities or credentials.
+
+================================================================
+11. APPEND-ONLY LEDGER REQUIREMENTS
+================================================================
+
+At the beginning of every run, append a new RUN-ID after reading the complete existing ledger.
+
+At the end of every iteration, append:
+- source checkpoint;
+- backup artifact and hash;
+- lineage/merge decision reference;
+- modified complete files;
+- BUG-ID entries;
+- TEST-ID entries;
+- environment;
+- method;
+- expected result;
+- actual result;
+- PASS, FAIL, BLOCKED or NOT_RUN;
+- status level: VERIFIED_STATIC, VERIFIED_WINDOWS, VERIFIED_NETWORK or VERIFIED_HARDWARE;
+- safety checks;
+- known limitations;
+- produced artifacts with byte size and SHA-256;
+- clean-stop status;
+- one exact next action.
+
+Never rewrite previous entries.
+Never mark an issue FIXED_VERIFIED without a targeted passing test and regression check.
+
+================================================================
+12. RELEASE PACKAGE
+================================================================
+
+Return complete files and a complete checkpoint/final ZIP, never fragment patches.
+
+The release should include at least:
+- ptz_patrol_gui.py;
+- ptz_commands.bat;
+- config.txt;
+- requirements.txt;
+- README.md;
+- PROJECT_PROGRESS_LOG.txt;
+- CONTINUATION_STATUS.txt;
+- DEVELOPMENT_LINEAGE_AND_FEATURE_PROVENANCE.txt;
+- FEATURE_RETENTION_MATRIX.txt;
+- REGRESSION_MATRIX.txt;
+- TEST_EVIDENCE_MATRIX.txt;
+- MERGE_DECISION_LOG.txt;
+- TEST_RESULTS.txt;
+- KNOWN_LIMITATIONS.txt;
+- SHA256SUMS.txt;
+- Windows validation launcher/checklist where required.
+
+The release must not contain:
+- credentials;
+- cache directories;
+- accidental runtime logs;
+- mock cameras;
+- fake-success paths;
+- unrelated build debris;
+- obsolete source files that could be mistaken for the entry point.
+
+Validate ZIP integrity and all hashes after packaging.
+
+================================================================
+13. FINAL ACCEPTANCE GATE
+================================================================
+
+Do not describe the project as finished until all of these are true or explicitly marked with honest limitations:
+
+- every available version was inventoried comparatively;
+- the development lineage explains why each retained subsystem exists;
+- current source was compared against the versions that originally solved each problem;
+- confirmed real PTZ behavior was preserved;
+- production mock and false success were removed;
+- the complete product architecture was retained;
+- task-oriented tabs were retained/restored;
+- active-camera selection is immediate and independent of video;
+- selected-camera video is integrated without blocking the GUI;
+- bounded pulse, explicit Stop, hard limits and UNSYNCED behavior share one ownership model;
+- radar is labeled as measured or estimated truthfully;
+- display forward and calibration zero are separate;
+- patrol uses stable EXEC order;
+- PING_PONG does not duplicate endpoints;
+- office-fan workflows are available;
+- discovery and diagnostics preserve tested protocol knowledge;
+- config migration is safe;
+- no credentials leak;
+- all automated tests have recorded results;
+- unperformed Windows/network/hardware tests are not claimed as passed;
+- complete files and checkpoint ZIP were produced;
+- append-only ledger contains the exact next action.
+
+================================================================
+14. EXECUTION INSTRUCTION
+================================================================
+
+Begin now.
+
+First read every supplied TXT file and inspect every supplied ZIP and diagnostic log.
+Do not modify source yet.
+
+Produce the lineage, version inventory, feature-provenance, regression, evidence and merge-decision reports.
+Explain how the original application idea led to each later branch and how each branch solved a different problem.
+
+Only after the development picture is coherent:
+- back up the checkpoint;
+- run the baseline tests;
+- continue from the ledger's EXACT NEXT ACTION;
+- merge the verified solutions feature by feature;
+- test after every coherent integration;
+- repair regressions;
+- update the ledger append-only;
+- package and verify the complete release.
+
+Do not ask for confirmation between normal stages.
+Ask only when an essential artifact is missing, two authoritative sources are irreconcilable, credentials are required for a real test, or a physical movement test requires the user's presence for safety.
+
+The final response must provide:
+1. concise development-lineage summary;
+2. version-by-version problem/solution summary;
+3. retained/restored/removed feature summary;
+4. test results separated into static, Windows, network and hardware evidence;
+5. known limitations;
+6. exact next action if anything remains;
+7. direct download links to all complete artifacts and the final ZIP.
+
+END OF MASTER PROMPT
+====================

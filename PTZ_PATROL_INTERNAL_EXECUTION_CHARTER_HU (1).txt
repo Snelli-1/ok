@@ -1,0 +1,108 @@
+BELSŐ VÉGREHAJTÁSI CHARTA
+WINDOWS PTZ PATROL CONTROLLER
+========================================
+
+CÉL
+A projektet nem egyetlen verzió folytatásaként, hanem a teljes fejlesztési út bizonyított eredményeinek egyesítéseként kell befejeznem. A felhasználónak nem kell újabb fejlesztői promptokat írnia vagy az egyes műszaki lépéseket megterveznie. Nekem kell a rendelkezésre álló forrásokból, beszélgetési előzményekből, tesztekből és diagnosztikai eredményekből meghatároznom a helyes következő műveletet.
+
+ALAPELV
+A legújabb verzió nem automatikusan a legteljesebb vagy legjobb verzió. Minden verzió más problémát oldott meg. Funkciónként kell meghatároznom:
+- mi volt az eredeti probléma;
+- melyik verzió oldotta meg;
+- milyen bizonyíték igazolta;
+- mit tartott meg az előző megoldásból;
+- mit veszített el;
+- milyen regressziót vezetett be;
+- melyik implementációt kell megtartani, visszaállítani, egyesíteni vagy újraírni.
+
+BIZONYÍTÉKI SORREND
+1. Felhasználó által megfigyelt fizikai kameraműködés.
+2. Valós hardver- és hálózati naplók.
+3. Későbbi egyértelmű felhasználói korrekciók.
+4. Natív Windows futási tesztek.
+5. Célzott integrációs és regressziós tesztek.
+6. Statikus tesztek, AST, import és konfigurációs tesztek.
+7. Forráskódban való jelenlét.
+8. Dokumentált elképzelés.
+9. Mock vagy szimulált eredmény.
+
+A szimulált eredmény soha nem minősül valós hardverbizonyítéknak.
+
+FEJLESZTÉSI ÖRÖKSÉG
+- Az eredeti alkalmazásötlet adja a patrol célját, a különböző megfigyelési időket, az office-fan ciklust és a több kamera független működését.
+- A nagy v1 ág adja a teljes termékarchitektúrát, GUI-t, konfigurációt, workereket, discoveryt, diagnosztikát, patrol editort és naplózást.
+- A REAL v1.2 ág adja az első felhasználó által visszaigazolt valós PTZ-kommunikáció alapját.
+- A REAL v1.3 ág adja a folyamatos patrol és többkamerás irány továbbfejlesztését.
+- A mélytesztek és request-matrixok adják a valós ONVIF-, SOAP-, Media-, PTZ-, Imaging-, Event- és RTSP-ismereteket.
+- A bootkalibrációs teszt bizonyítja, hogy a mechanikai önkalibrációból nem nyerhető megbízható ONVIF-pozíció.
+- A felhasználói fizikai mérés adja a 26 lépés / 180 fok, 52 lépés / 360 fok kalibrációs kiindulást az adott mozgási profilra.
+- A v1.4 ág adja a bounded pulse, explicit Stop, hard limit, mozgástulajdon és UNSYNCED biztonsági modellt.
+- A v1.5 ág adja a sebesség-, impulzus-, radar-, kalibrációs és kameránkénti limitmodellt.
+- A v2.0 ág adja a videóintegráció és selected-camera preview irányát.
+- A v2.1 ág adja a feladatorientált füles kezelőfelületet.
+- A későbbi, régi v1 alapra épített dashboard nem tekinthető teljes folytatásnak, csak részleges vizuális forrásnak.
+
+NEM ALKUKÉPES VÉGSŐ KÖVETELMÉNYEK
+- Egy nagy, jól tagolt ptz_patrol_gui.py.
+- Egy ptz_commands.bat.
+- Egy config.txt.
+- Teljes fájlok, nem részlet-patchek.
+- Append-only PROJECT_PROGRESS_LOG.txt.
+- Egyértelmű, videótól független aktívkameraválasztás.
+- Feladatorientált fülek.
+- Valós, igaz állapotokat közlő ONVIF/PTZ backend.
+- Production mock és félrevezető dry-run teljes eltávolítása.
+- Kameránként külön worker és sorosított command ownership.
+- Véges mozgási impulzus és minden impulzus után explicit Stop.
+- Hard-limit ellenőrzés a hálózati parancs előtt.
+- Stop-hiba esetén UNSYNCED.
+- Kalibrációhoz kötött szoftveres iránybecslés.
+- A becsült irány soha nem jelenhet meg mért ONVIF-koordinátaként.
+- Külön display forward és calibration zero.
+- Stabil EXEC-alapú patrolsorrend.
+- PING_PONG végpontduplikáció nélkül.
+- Office-fan sablonok.
+- Selected-camera élőkép, amely nem blokkolja a GUI-t vagy a patrolt.
+- Discovery, diagnostics, saved views/presets, logs és settings megtartása.
+- Minden teszteredmény valós környezeti szinttel legyen megjelölve.
+
+MUNKAMÓDSZER
+1. Minden elérhető forrás és napló teljes auditja.
+2. Verziónkénti és funkciónkénti provenance meghatározása.
+3. Ledger és forrás összevetése.
+4. Változatlan checkpoint-backup és SHA-256.
+5. Módosítás előtti baseline tesztek.
+6. Az EXACT NEXT ACTION hiteles meghatározása.
+7. Funkciónkénti, kis koherens integráció.
+8. Minden integráció után célzott és regressziós teszt.
+9. Mock-, credential- és command-target audit.
+10. Append-only naplózás.
+11. Teljes checkpoint készítése és integritásvizsgálata.
+12. Következő iteráció mindaddig, amíg a végső elfogadási feltételek teljesülnek vagy valós Windows/hardverteszt szükséges.
+
+DÖNTÉSI SZABÁLY
+Ha egy újabb verzió látványosabb, de elveszít egy korábban bizonyított funkciót, a korábban bizonyított funkciót vissza kell állítani. Ha egy régebbi verzió működő hardvervezérlést tartalmaz, de szűk GUI-val rendelkezik, a hardvervezérlést kell megtartani, nem a teljes régi alkalmazást. Ha két megoldás részben fedi egymást, közös állapot-, konfiguráció- és worker-modellben kell őket egyesíteni.
+
+TESZTSTÁTUSZOK
+- VERIFIED_STATIC
+- VERIFIED_WINDOWS
+- VERIFIED_NETWORK
+- VERIFIED_HARDWARE
+- IMPLEMENTED_UNVERIFIED
+- BLOCKED
+- NOT_RUN
+- REGRESSION
+- REMOVED
+
+Windows-, hálózati vagy hardverteszt hiányában tilos magasabb ellenőrzési szintet állítani.
+
+AUTONÓMIA
+Normál fejlesztési lépések között nem kérek megerősítést. Magam végzem el az auditot, a döntést, a generálást, a tesztelést, a javítást, a regresszióellenőrzést és a csomagolást. Csak akkor kérek felhasználói beavatkozást, ha:
+- nélkülözhetetlen fájl ténylegesen nem hozzáférhető;
+- valós hitelesítési adat szükséges;
+- két elsődleges forrás feloldhatatlanul ellentmond egymásnak;
+- fizikai kameramozgás biztonságos megfigyelése szükséges;
+- natív Windows-környezetben kell tesztet futtatni.
+
+KIMENET
+Minden jelentős iteráció végén teljes fájlokat és teljes checkpoint ZIP-et adok vissza, teszteredményekkel, korlátozásokkal, SHA-256 jegyzékkel és pontos következő lépéssel. Nem állok meg attól, hogy a forrás szintaktikailag helyes vagy a GUI elindul. A cél a bizonyíthatóan koherens, valós kamerával őszintén működő végleges alkalmazás.

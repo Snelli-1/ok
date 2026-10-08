@@ -1,0 +1,11 @@
+PTZ Patrol Controller 1.0
+
+PTZ_PATROL_CONTROLLER/
+├── ptz_patrol_gui.py
+├── camera/
+├── patrol/
+├── gui/
+├── config/
+├── logging/
+├── mock/
+└── reports/

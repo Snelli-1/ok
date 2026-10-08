@@ -1,0 +1,290 @@
+CLAUDE PROJECT GENERATOR PROMPT
+Project: Local-First Multi-Camera ONVIF PTZ Patrol Controller for Windows
+Prepared from the project's planning conversation and UI sketch
+
+ROLE
+You are a senior Windows desktop application architect and Python engineer. Build a complete, maintainable Windows application for independently controlling and automating multiple ONVIF PTZ cameras on a closed local network.
+
+Before writing code, read the companion file PROJECT_CONTEXT_AND_SOURCES.txt completely. Treat that file as the source of truth for the user's intent, constraints, tested applications, UI concept, safety requirements, and source links.
+
+PRIMARY USER NEED
+Existing Android camera applications such as Onvier and tinyCam can connect to the cameras and perform manual ONVIF PTZ control, but they do not provide the required advanced automation. The user does not want hundreds of fixed daily schedule entries. The user wants reusable cyclic patrol programs that repeat indefinitely.
+
+A patrol example:
+
+MAIN preset -> wait 120 s
+LEFT_BLIND_SPOT preset -> wait 15 s
+MAIN preset -> wait 120 s
+RIGHT_BLIND_SPOT preset -> wait 15 s
+Repeat forever
+
+Each camera must run an independent loop. A failure or disconnection of one camera must not stop other camera workers.
+
+TARGET PLATFORM
+- Primary platform: Windows 10 and Windows 11.
+- Native Windows networking only. Do not require Linux, WSL, Docker, or a virtual machine.
+- Python GUI for simplicity.
+- BAT/CMD files may be used only for start, stop, restart, diagnostics, and packaging helpers.
+- The main patrol engine, configuration validation, logging, state management, and ONVIF interaction must be implemented in Python.
+- The program should be capable of being packaged as a standalone Windows executable later.
+
+COMPLETE DELIVERY RULE
+Return complete standalone files, not patches or fragments. Every file must be shown in full. Include a file tree and exact setup/run instructions. Do not omit imports, helper functions, schemas, error handling, or comments necessary to run the project.
+
+MVP ARCHITECTURE
+Use a clear separation of concerns:
+
+1. GUI layer
+   - Prefer Tkinter/ttk because it is included with Python.
+   - The GUI must never block while cameras are moving or reconnecting.
+   - GUI updates from workers must be thread-safe.
+
+2. Camera abstraction
+   - One CameraController object per camera.
+   - Normalize these operations:
+     discover_capabilities()
+     get_profiles()
+     get_presets()
+     get_status()
+     goto_preset()
+     continuous_move()
+     relative_move()
+     absolute_move()
+     stop()
+     goto_home()
+   - Unsupported operations must be detected and disabled in the GUI rather than assumed.
+
+3. Patrol engine
+   - One independent worker/state machine per enabled camera.
+   - Supported step types for the first useful version:
+     GOTO_PRESET
+     WAIT
+     CONTINUOUS_MOVE
+     STOP
+     GOTO_HOME
+   - Repeat modes:
+     FOREVER
+     FIXED_COUNT
+     DISABLED
+   - Camera states:
+     DISCONNECTED
+     CONNECTING
+     IDLE
+     MOVING
+     DWELLING
+     PAUSED
+     MANUAL_OVERRIDE
+     RECOVERING
+     STOPPING
+     ERROR
+   - Manual control must pause that camera's patrol.
+   - Provide pause durations such as 2 min, 5 min, 15 min, and indefinite.
+
+4. Configuration layer
+   - All user-managed settings must load from and save to one human-readable file named config.txt.
+   - Use an INI-style format compatible with Python configparser.
+   - Save atomically: write a temporary file, validate it, then replace config.txt.
+   - Preserve unknown fields where practical for forward compatibility.
+   - Include config_version and migration support.
+   - Store camera definitions, preset aliases/tokens, patrol steps, timings, retry settings, preview settings, and application settings in this one file.
+   - For the first prototype, credentials may be supported in config.txt with a visible warning. Design an optional Windows Credential Manager adapter so plaintext passwords can later be replaced by credential IDs.
+
+5. Logging and runtime state
+   - Application log and one log per camera.
+   - Rotating logs.
+   - Never log passwords, authentication headers, nonce values, or full credential-bearing URLs.
+   - Runtime state may be stored separately in a generated runtime/state.json because it is not user configuration. The authoritative editable configuration remains config.txt.
+
+6. ONVIF implementation
+   - Prefer a maintained Python ONVIF library that supports Windows, HTTP Digest and/or WS-UsernameToken, discovery, profiles, presets, PTZ status, GotoPreset, ContinuousMove, and Stop.
+   - If library compatibility is unreliable for the target camera, implement a replaceable CLI adapter so the Python application can invoke a tested ONVIF CLI.
+   - Do not implement WS-Security cryptography in BAT files.
+   - Do not assume the ONVIF service port is the RTSP port. Typical RTSP is 554, while the camera's ONVIF service may use 80, 8080, 8899, or another configured port.
+   - ProfileToken and PresetToken must be discovered and stored.
+
+TARGET CAMERA CONTEXT
+The currently discussed camera is a V380 Pro family device identified by the user as WET2440. V380-branded hardware varies between sellers and firmware versions. Do not hard-code behavior based only on the V380 name. Probe actual capabilities and services.
+
+POSITION STRATEGY, IN ORDER OF PREFERENCE
+1. Preset-based patrol using GetPresets and GotoPreset.
+2. Absolute or relative positioning if supported and reliable.
+3. ContinuousMove plus explicit Stop only as a fallback.
+4. Time-calibrated position estimation only as the last fallback.
+
+TIME-CALIBRATED FALLBACK
+If GetStatus does not report usable coordinates and presets are unavailable or unreliable, provide an optional calibration tool:
+- Measure left-to-right and right-to-left pan travel separately.
+- Measure bottom-to-top and top-to-bottom tilt travel separately.
+- Run at least 5 measurements per direction and use the median.
+- Account for command start/stop latency.
+- Store calibration values in config.txt.
+- Track estimated pan and tilt percentages from 0% to 100%.
+- Mark estimated positions clearly as estimates, never as measured coordinates.
+- Periodically re-synchronize at a known preset or safe mechanical endpoint.
+- Every continuous movement command must have a timeout followed by an explicit Stop.
+- Never send an unlimited movement command.
+
+RELIABILITY REQUIREMENTS
+Follow this failure-handling sequence:
+Recognize -> categorize -> handle -> log -> communicate -> recover.
+
+Specific requirements:
+- Per-command timeout.
+- Configurable retry count and delay.
+- Exponential or bounded retry for reconnects.
+- A disconnected camera cannot block the GUI or other camera workers.
+- On worker recovery: connect, send Stop, optionally query status, go to a configured safe/home preset, then restart the patrol according to policy.
+- The global emergency stop sends Stop to every connected camera.
+- Stop patrol can optionally return the camera to its home preset.
+- Validate all numeric units and ranges.
+- Use seconds explicitly for dwell and timeout values.
+- Confirm camera clock/time differences if WS-Security requests fail.
+
+GUI BASED ON THE USER'S SKETCH
+Recreate and improve the attached rough sketch concept:
+
+A. Left camera/device panel
+- Scrollable list of cameras with checkboxes or status indicators.
+- Display name, IP address, ONVIF port, and online/offline state.
+- Protocol selector, initially ONVIF.
+- Add camera button.
+- Discover button.
+- Delete button.
+- Selected-camera manual PTZ controls: up, down, left, right, and center Stop/Home button.
+- Press-and-hold movement behavior: start movement on mouse press and issue Stop on release.
+- Speed slider.
+
+B. Upper-right automation editor
+- Dynamic patrol-step rows, not three fixed preset fields.
+- Each row includes:
+  step number
+  action type
+  preset alias/token or movement vector
+  movement speed, where applicable
+  dwell time in seconds
+  enabled checkbox
+  move up/down
+  duplicate
+  delete
+- Add step button.
+- Enable automation checkbox.
+- Repeat forever or repeat count.
+- Retry policy.
+- On-start and on-stop behavior.
+- Test one cycle button.
+- Start, pause, resume, stop, return home.
+
+C. Lower-right preview grid
+- Up to 8 camera tiles in a 4 x 2 arrangement, matching the sketch.
+- Preview is diagnostic feedback, not the main recorder/viewer.
+- Default preview disabled to reduce CPU load.
+- Allow snapshot-only mode or low-frame-rate preview, such as 1 frame/s.
+- Each tile displays camera name, connection state, patrol state, current step, and next action countdown.
+- Clicking a tile selects the camera.
+
+D. Global status bar
+- Active cameras.
+- Running patrols.
+- Offline cameras.
+- Last error.
+- Emergency stop button.
+
+CONFIG.TXT DESIGN
+Create and document a complete config.txt schema. It should support sections similar to:
+
+[APPLICATION]
+[SECURITY]
+[PREVIEW]
+[CAMERA_1]
+[CAMERA_1_PRESETS]
+[CAMERA_1_CALIBRATION]
+[PATROL_ENTRANCE]
+[MANUAL_OVERRIDE]
+
+Patrol steps should be editable and ordered. A readable first implementation is acceptable, for example:
+step_1 = GOTO_PRESET,MAIN,120
+step_2 = GOTO_PRESET,LEFT,15
+step_3 = GOTO_PRESET,MAIN,120
+step_4 = GOTO_PRESET,RIGHT,15
+
+Provide strict parsing with useful error messages, including section, key, invalid value, and expected format.
+
+WINDOWS BAT FILES REQUIRED
+Generate complete files:
+- start.bat
+- stop.bat
+- restart.bat
+- diagnose.bat
+
+start.bat:
+- Find an appropriate Python executable.
+- Refuse duplicate application instances.
+- Start the GUI with a predictable working directory.
+- Redirect startup failures to logs/startup.log.
+
+stop.bat:
+- Request graceful stop through a local control mechanism or PID file.
+- Allow time for Stop commands and return-home behavior.
+- Use forced termination only as a last resort.
+
+restart.bat:
+- Graceful stop, short wait, start.
+
+diagnose.bat:
+- Print Python version.
+- Check required modules.
+- Check config.txt readability.
+- Test reachability of configured camera hosts and ONVIF ports without exposing passwords.
+- Save results to logs/diagnostics.txt.
+
+NETWORKING
+- Communicate directly from Windows to camera LAN IP addresses.
+- Do not require localhost forwarding or VM networking.
+- localhost may only be used for an optional internal control API bound to 127.0.0.1.
+- Do not expose a local API on all interfaces by default.
+- Support fixed camera IP addresses or DHCP reservations.
+- Internet access is not required for normal patrol operation.
+
+SECURITY
+- Local-first and cloud-independent.
+- Restricted ONVIF account recommended instead of camera administrator.
+- No password reuse.
+- No telemetry unless explicitly implemented and disabled by default.
+- Sanitize configuration exports and logs.
+- Bind any local control API to 127.0.0.1 by default.
+- Never silently enable port forwarding.
+
+DEVELOPMENT PHASES
+Phase 1: CLI capability probe and one-camera GotoPreset proof.
+Phase 2: One-camera two-preset loop for at least 20 successful cycles.
+Phase 3: config.txt parser/writer, validation, and atomic save.
+Phase 4: independent multi-camera workers and logs.
+Phase 5: Tkinter GUI matching the sketch.
+Phase 6: snapshot/low-frame-rate preview.
+Phase 7: optional continuous-sweep and calibration fallback.
+Phase 8: packaging and Windows startup integration.
+
+TESTS REQUIRED
+- Config parser unit tests.
+- Invalid timing/range tests.
+- Mock ONVIF camera adapter tests.
+- Worker isolation test: Camera 2 fails while Camera 1 continues.
+- Manual override test.
+- Stop and return-home test.
+- Lost network and recovery test.
+- Application restart and state recovery test.
+- Password-redaction test.
+- Calibration mathematics test if fallback is implemented.
+
+EXPECTED FIRST RESPONSE
+Do not immediately dump the entire final application before showing architecture. First provide:
+1. Finalized assumptions.
+2. Proposed file tree.
+3. config.txt schema.
+4. ONVIF library/CLI choice with justification and fallback.
+5. Threading/state-machine design.
+6. UI mapping from the sketch.
+7. Implementation plan.
+8. Risks and compatibility checks for the V380 Pro WET2440.
+
+Then generate the complete project files in logical batches while keeping every returned file complete and standalone.

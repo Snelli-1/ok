@@ -1,0 +1,866 @@
+PTZ PATROL CONTROLLER - PROJEKTATADAS ES KONTEXTUS
+====================================================
+
+Dokumentum celja
+----------------
+Ez a fajl azert keszult, hogy egy uj M365 Copilot-beszelgetes, Claude-futtatas,
+fejleszto vagy tesztelo gyorsan es pontosan at tudja venni a Windows PTZ Patrol
+Controller projektet. A dokumentum osszefoglalja, honnan indult a projekt, milyen
+problemak derultek ki, hogyan alakult az architektura, mi valosult meg, mi van meg
+folyamatban, milyen biztonsagi es megbizhatosagi elvek ervenyesek, es mi legyen a
+kovetkezo konkret fejlesztesi sorrend.
+
+FONTOS: A tenyleges aktualis forrasallapotot mindig a legfrissebb checkpoint ZIP,
+a PROJECT_PROGRESS_LOG.txt es a CONTINUATION_STATUS.txt alapjan kell megallapitani.
+Ez a dokumentum a teljes projekt kontextusat adja, nem helyettesiti a forraskod
+aktualis auditjat.
+
+
+1. HONNAN INDULT A PROJEKT
+==========================
+
+A projekt egy gyakorlati megfigyelesi problemabol indult. A felhasznalo PTZ
+kamerakat szeretne periodikusan kulonbozo iranyokba forgatni, hogy kevesebb
+kameraval nagyobb teruletet lehessen idoszakosan ellenorizni. A cel nem a fix
+kamerak teljes kivaltasa, hanem alacsonyabb prioritasu holtterek, bejaratok,
+udvarreszek vagy uzleti teruletek ciklikus ellenorzese.
+
+A szukseges mukodes nem egyszeru napi idozites. A legtobb alkalmazas csak azt
+tudja, hogy egy adott orakor menjen egy fix pozicioba. Ez egy teljes napra rengeteg
+kulon idopont felvitelet igenyelne. A felhasznalo ehelyett ujrahasznalhato,
+vegtelenul ismetlodheto patrol-ciklust szeretne.
+
+Pelda:
+
+  MAIN              -> varakozas 120 s
+  LEFT_BLIND_SPOT   -> varakozas 15 s
+  MAIN              -> varakozas 120 s
+  RIGHT_BLIND_SPOT  -> varakozas 15 s
+  majd ismetles az elejerol
+
+Tobb kameranak egymastol fuggetlen patrolt kell futtatnia. Egy kamera hibaja,
+halozati kiesese vagy hitelesitesi problemaja nem allithatja le a tobbi kamerat.
+
+A projekt celkameraja jelenleg egy V380 Pro csaladba sorolt WET2440 eszkoz, de a
+V380 nev alatt sokfele hardver es firmware letezik. Ezert a program nem epulhet
+kizarolag a modellnev feltetelezeseire. A tenyleges szolgaltatasokat es ONVIF
+kepessegeket futas kozben kell felderiteni.
+
+
+2. KORAI ALKALMAZASTESZTEK ES TANULSAGOK
+========================================
+
+Android 7.0-s Blaupunkt telefonon es mas eszkozokon tobb kesz alkalmazas kerult
+kiprobalasra.
+
+Onvier:
+- sikeresen csatlakozott a kamerahoz;
+- mukodott a kezi ONVIF PTZ-vezerles;
+- referenciaalkalmazaskent hasznalhato a kamera elerhetosegenek ellenorzesere;
+- nem adott megfelelo, egyedileg szerkesztheto, vegtelen patrol-loopot.
+
+tinyCam:
+- sikeresen csatlakozott;
+- kezelte az ONVIF PTZ-t es a preseteket;
+- a kivant kulon, kamerankenti, valtozo varakozasi ideju folyamatos patrolt nem
+  tudta megfeleloen megvalositani.
+
+IPCamPlus:
+- nem tudott megbizhatoan csatlakozni a kamerahoz;
+- valoszinuleg gyarto- vagy OEM-specifikus kompatibilitasi korlatokba utkozott.
+
+PTZ Camera Controller + Viewer es hasonlo alkalmazasok:
+- sokszor VISCA over UDP vagy professzionalis broadcast kamerakra keszulnek;
+- a presetek kezi visszahivasa nem azonos az automatikus, konfiguralt dwell-time
+  patrol-loop funkcioval;
+- a dokumentacio nem igazolta a kivant altalanos ONVIF loopot.
+
+Kovetkeztetes:
+- a kamera ONVIF/PTZ resze mukodik, mert Onvier es tinyCam vezerli;
+- a hianyzo elem az automatizalasi es folyamatvezerlesi reteg;
+- tovabbi veletlenszeru mobilalkalmazasok probalgatasa helyett sajat Windowsos
+  vezerlo keszitese indokolt.
+
+
+3. MIERT WINDOWSOS SAJAT ALKALMAZAS
+===================================
+
+A felhasznalonak mar van egy mukodo, nagyméretu Python/Tkinter Windows-projektje,
+amely egyetlen nagy Python GUI-fajlbol es BAT-hidbol all. A PTZ projektet is ehhez
+hasonlo, kozvetlenul atlathato szerkezettel szeretne megvalositani.
+
+Egy kulon Linux virtualis gep mar hasznalatban van egy szkennerprojekthez. A PTZ
+projekt nem modosithatja annak localhost-, haloztat- vagy VM-beallitasait. A PTZ
+alkalmazas kozvetlenul a Windows geprol kommunikáljon a helyi kamerahalozattal.
+
+Vegleges egyszerusitett forrasstruktura:
+
+  PTZ_Patrol_Controller/
+  |-- ptz_patrol_gui.py
+  |-- ptz_commands.bat
+  |-- config.txt
+  |-- requirements.txt
+  |-- README.md
+  `-- PROJECT_PROGRESS_LOG.txt
+
+Futas kozben generalhato mappak:
+
+  diagnostics/
+  logs/
+  runtime/
+
+A projekt tudatosan nem lett sok Python-modulra szetszedve. A felhasznalo egyetlen
+nagy, de jol tagolt es teljes Python-fajlt ker, nem reszletpatcheket.
+
+
+4. ARCHITEKTURA ES FELELOSSEGI KOROK
+====================================
+
+ptz_patrol_gui.py:
+- teljes Tkinter/ttk grafikus felulet;
+- konfiguracio betoltese, validalasa, mentese;
+- kamerankenti worker-szalak;
+- patrol-allapotgep;
+- mock es dry-run mod;
+- hibakezeles, naplozas es helyreallitas;
+- discovery es diagnosztika;
+- elonezet/snapshot/video fejlesztes;
+- statusz-overlay;
+- kezdobarat es halado kezelofelulet;
+- projekt- es kepessegjelentesek.
+
+ptz_commands.bat:
+- az egyetlen BAT-fajl;
+- a Python GUI inditasa, leallitasa, diagnosztikaja;
+- egyszeri, korlatozott ONVIF CLI-parancsok meghivasa;
+- nem tarthat fenn sajat patrol-loopot;
+- nem implementalhat sajat SOAP/WS-Securitykriptografiat;
+- a Python es a BAT parancsnevei, argumentumsorrendje es RESULT-formatuma pontosan
+  egyezzen.
+
+config.txt:
+- az egyetlen hiteles, felhasznalo altal szerkesztheto konfiguracios fajl;
+- kamerak, portok, credential-hivatkozasok;
+- profil- es preset-tokenek;
+- patrolok es vegrehajtasi sorrend;
+- speed, move, settle, dwell es timeout alapertékek;
+- discovery-beallitasok;
+- preview/videobeallitasok;
+- mock/dry-run;
+- manual override;
+- named view es kalibracios adatok;
+- megjegyzesek es sorrend megorzese.
+
+README.md:
+- teljes Windows telepitesi es hasznalati leiras;
+- mock, dry-run es valodi kamera tesztelese;
+- ONVIF/RTSP-portok kulonbsege;
+- opcionális video backendek;
+- licenc- es interoperability-megjegyzesek;
+- hibakereses.
+
+PROJECT_PROGRESS_LOG.txt:
+- append-only projektfejlesztesi naplo;
+- minden futtatas valtozasai;
+- BUG-ID-k, TEST-ID-k es RUN-ID-k;
+- tesztmodszerek es tenyleges eredmenyek;
+- hianyzo, blokkolo es befejezetlen elemek;
+- checkpointok;
+- pontos kovetkezo lepes.
+
+
+5. MAR KIALAKITOTT MEGBIZHATOSAGI MODELL
+=========================================
+
+Kamerankent kulon CameraWorker fut.
+
+Minden egy kamerahoz tartozo parancs sorositva van:
+- patrol-lepes;
+- kezi PTZ;
+- Stop;
+- Return Home;
+- preset-teszt;
+- recovery;
+- Emergency Stop;
+- position save/goto.
+
+Kulon kamerak parhuzamosan mukodhetnek, de ugyanazt a kamerahidat nem szabad ket
+szalrol egyszerre hivni.
+
+A GUI-szal nem vegezhet halozati vagy hosszu BAT-muveletet. A workerek es a GUI
+thread-safe queue-kon keresztul kommunikalnak. A Tkinter frissitese root.after()
+segitsegevel tortenik.
+
+Minden varakozas megszakithato threading.Event jellegu mechanizmussal.
+
+Fontos allapotok:
+- DISCONNECTED
+- CONNECTING
+- IDLE
+- MOVING
+- SETTLING
+- DWELLING
+- PAUSED
+- MANUAL_OVERRIDE
+- RECOVERING
+- STOPPING
+- ERROR
+
+Hibakezelesi sorrend:
+
+  felismeres -> kategorizalas -> kezeles -> naplozas -> kommunikacio -> helyreallitas
+
+ContinuousMove mindig veges ideju, es mindig explicit Stop koveti.
+
+Emergency Stop a legmagasabb prioritasu parancs.
+
+
+6. BIZTONSAGI MODOK
+===================
+
+Mock mode:
+- nem igenyel valodi kamerat;
+- teljes GUI- es patrolteszt;
+- teljes kepessegu mock kamera;
+- idonkent hibazo mock kamera;
+- korlatozott kepessegu mock kamera;
+- bizonyitja a worker-izolaciot.
+
+Dry-run:
+- megengedi az olvasasi diagnoztikat;
+- blokkolja a valodi mozgast;
+- blokkolja a GotoPreset, SetPreset, AbsoluteMove, RelativeMove es ContinuousMove
+  mutato muveleteket;
+- a Stop biztonsagi muvelet kulon kezelheto.
+
+Alapertelmezett biztonsagos indulasi allapot:
+
+  mock_mode = true
+  dry_run = true
+
+Valodi kamerara atteres fokozatos:
+
+1. mock=true, dry_run=true
+2. mock=false, dry_run=true
+3. capability probe
+4. egyetlen kamera engedelyezese
+5. ismert preset biztonsagos tesztje
+6. mock=false, dry_run=false
+7. csak ezutan teljes patrol
+
+
+7. PATROL-ELKEPZELES
+====================
+
+A patrolnak nem napi idopontlistat, hanem ujrahasznalhato folyamatot kell
+jelentenie.
+
+Minden lepes kapjon stabil vegrehajtasi szamot:
+
+  10, 20, 30, 40 ...
+
+A vegrehajtasi szam a hiteles sorrend, nem pusztan a tabla aktualis sorpozicioja.
+A hezagok szandekosak, hogy kesobb be lehessen szurni uj lepeseket.
+
+Pelda:
+
+  EXEC 10  GOTO_PRESET LEFT
+  EXEC 20  WAIT 5 s
+  EXEC 30  GOTO_PRESET CENTER
+  EXEC 40  WAIT 8 s
+  EXEC 50  GOTO_PRESET RIGHT
+  EXEC 60  WAIT 5 s
+
+Tervezett muveletek:
+- GOTO_PRESET
+- WAIT
+- CONTINUOUS_MOVE
+- STOP
+- GOTO_HOME
+- kesobb ABSOLUTE_MOVE es RELATIVE_MOVE, ha valoban tamogatott
+
+Kulon idofogalmak:
+- move_s
+- move_timeout_s
+- settle_s
+- dwell_s
+
+A programnak automatikus biztonsagos alapertékeket kell adnia, ha a felhasznalo
+kihagyja a sebesseget, settle vagy dwell időt.
+
+Ertekforras jelolese:
+- EXPLICIT
+- CAMERA_DEFAULT
+- APPLICATION_DEFAULT
+- AUTOMATICALLY_INSERTED
+
+Ha ket mozgasi lepes kozott nincs megfigyelesi ido:
+- figyelmeztetes;
+- „Insert Recommended Wait” lehetoseg;
+- konfiguralt esetben automatikus WAIT-beszuras;
+- modositas csak lathato felhasznaloi jovahagyassal.
+
+
+8. OFFICE-FAN ES LOOP-MODOK
+===========================
+
+A felhasznalo olyan mozgasmodot szeretne, mint egy nyari asztali ventilator:
+lassan vegignezze a teruletet, megalljon a fontos pontokon, majd visszaforduljon.
+
+Tervezett sablonok:
+- CUSTOM
+- TWO_POSITION_FAN
+- THREE_POSITION_FAN
+- FOUR_POSITION_SCAN
+- MAIN_WITH_BLIND_SPOTS
+- SLOW_PAN_LEFT_RIGHT
+- CAMERA_PRESET_TOUR
+
+Loop-modok:
+- OFF
+- ONCE
+- FIXED_COUNT
+- FOREVER
+- PING_PONG
+- RANDOM_SAFE
+- SCHEDULED_WINDOW
+
+PING_PONG ket pozicio esetén:
+
+  1 -> 2 -> 1 -> 2
+
+PING_PONG negy pozicio esetén:
+
+  1 -> 2 -> 3 -> 4 -> 3 -> 2 -> ismetles
+
+A vegpontok nem hajthatok vegre ketszer kozvetlenul egymas utan.
+
+MAIN_WITH_BLIND_SPOTS:
+
+  MAIN -> LEFT -> MAIN -> RIGHT -> ismetles
+
+
+9. DISCOVERY ES DIAGNOSZTIKA
+============================
+
+A korai GUI-ban a Discover gomb csak helyorzo uzenetet adott. A kesobbi
+fejlesztesek celja egy tenyleges „DISCOVER & DIAGNOSE” rendszer volt.
+
+Tervezett es reszben implementalt elemek:
+- Windows IPv4 adapterek felismerese;
+- felhasznalo altal engedelyezett helyi alhalozat;
+- ONVIF WS-Discovery;
+- EndpointReference, Types, Scopes es XAddr feldolgozasa;
+- ARP-tabla es MAC-cim;
+- ping mint kiegeszito bizonyitek, nem kotelezo feltetel;
+- korlatozott ismertport-vizsgalat;
+- QUICK, STANDARD es korlatozott EXTENDED mod;
+- megszakithatosag;
+- sebesseg- es parhuzamossagi limit;
+- stabil eszkozazonosito;
+- duplikalt talalatok osszevonasa;
+- azonos modellu kamerak csoportositasa;
+- gyarto/modell/firmware leltar;
+- read-only ONVIF diagnosztika;
+- felhasznaloi jovahagyas config.txt modositas elott.
+
+Tiltott funkciok:
+- jelszo-brute-force;
+- felhasznalonev- vagy gyari jelszolista;
+- publikus internet automatikus vizsgalata;
+- alapertelmezett teljes 1-65535 portscan;
+- firmware modositas;
+- automatikus reboot/reset;
+- automatikus felhasznaloletrehozas;
+- router/tuzfal modositas.
+
+Eszkozazonossag prioritas:
+1. EndpointReference UUID
+2. serial number
+3. hardware ID
+4. MAC-cim
+5. host + gyarto + modell ideiglenes ujjlenyomat
+
+Talalati osztalyok:
+- CONFIRMED_ONVIF
+- LIKELY_ONVIF
+- POSSIBLE_CAMERA
+- NETWORK_DEVICE
+- UNREACHABLE
+
+Nyitott port onmagaban nem bizonyit ONVIF kamerat.
+
+
+10. MINI KOMPATIBILITASI ADATBAZIS
+==================================
+
+A mini adatbazis a nagy Python-fajlban lehet beepitve, felhasznaloi felulirasokkal
+a config.txt-ben.
+
+Kezdeti profilok:
+- generic_standard_onvif
+- generic_onvif_http_80
+- generic_onvif_https_443
+- v380_family_low_confidence
+- hisilicon_camhi_family_low_confidence
+- unknown_camera_candidate
+
+Bizalmi szintek:
+- OFFICIAL
+- MANUFACTURER_DOCUMENTED
+- COMMUNITY_VERIFIED
+- HEURISTIC
+- UNKNOWN
+
+A profil csak tipp/segitseg, nem bizonyitek. A szabvanyos valaszok mindig
+elsobbseget elveznek.
+
+
+11. ELOKEP ES STATUSZ-OVERLAY ELKEPZELES
+========================================
+
+Az elonezet opcionalis, alapertelmezetten kikapcsolt.
+
+Modok:
+- OFF
+- SNAPSHOT
+- LOW_FPS
+- LIVE_SELECTED
+
+OFF:
+- nincs dekodolas;
+- minimalis terheles.
+
+SNAPSHOT:
+- ONVIF GetSnapshotUri vagy kezileg megadott URL;
+- kezi vagy ritka frissites.
+
+LOW_FPS:
+- kb. 0,2-2 frame/s;
+- iranyellenorzesre;
+- nem teljes megfigyelorendszer.
+
+LIVE_SELECTED:
+- csak a kivalasztott kamera folyamatos streamje;
+- a tobbi kamera statusz vagy snapshot;
+- deselect/disable eseten decoder release.
+
+Video backend sorrend:
+1. snapshot_only
+2. OpenCV, ha telepitett es mukodik
+3. VLC/libVLC, ha telepitett es mukodik
+4. kulso, felhasznalo altal beallitott player
+5. status-only fallback
+
+A videohiba nem allithatja le a patrolt.
+A patrolhiba nem fagyaszthatja le az elonezetet.
+A keretsor latest-frame-only, hogy ne epuljon kesleltetes.
+
+Statusz-overlay a kepen:
+- kamera neve, stable ID, IP:port;
+- kapcsolat es worker-allapot;
+- EXEC szam;
+- aktualis lepes / osszes lepes;
+- action es target;
+- move/settle/dwell visszaszamlalas;
+- kovetkezo muvelet;
+- loop mod;
+- PTZ sebesseg;
+- override es recovery;
+- preview mod/backend;
+- FPS, felbontas, bitrate, dropped frames, latency, ha ismert;
+- utolso hiba es konkret javitasi javaslat;
+- mock/dry-run allapot.
+
+Titkok nem kerulhetnek az overlayre.
+
+
+12. KEZDOBARAT KEZELOFELULET
+=============================
+
+A GUI alapelrendezese kozel megfelelo:
+- bal oldali kameralista;
+- kezi PTZ;
+- jobb oldali patrol-editor;
+- also 4 x 2 kamera/statusz grid;
+- globalis statuszsor es Emergency Stop.
+
+Tervezett Beginner mode:
+- egyszeru elnevezesek;
+- guided camera setup;
+- safe defaults;
+- patrol sablonok;
+- Slow/Normal/Fast/Custom;
+- automatikus WAIT-javaslat;
+- „What Needs Attention?” panel;
+- „Fix This”, „Open Config”, „Open Diagnostics” akciok;
+- technikai SOAP/CLI mezok elrejtese.
+
+Advanced mode:
+- vegrehajtasi szamok;
+- nyers PTZ-adatok;
+- kulon speed vektorok;
+- coordinate space-ek;
+- move/settle/dwell;
+- CLI template-ek;
+- technikai capability flag-ek.
+
+A ket mod kozotti valtas nem veszithet adatot.
+
+„What Needs Attention?” kategoriak:
+- ERROR
+- WARNING
+- CONFIGURATION NEEDED
+- MISSING REQUIRED SOFTWARE
+- MISSING OPTIONAL SOFTWARE
+- MISSING CAMERA CAPABILITY
+- INFORMATION
+
+Minden uzenet mondja meg:
+1. mi hibazott;
+2. valoszinu ok;
+3. mely funkcio erintett;
+4. folytathato-e biztonsagosan a patrol;
+5. pontos javitasi lepes;
+6. mely config szekcio/kulcs erintett;
+7. mely diagnosztikai jelentest kell megnezni.
+
+
+13. POZICIO ES PRESETMENTES
+===========================
+
+A gomb neve:
+
+  READ POSITION / SAVE VIEW
+
+Kepessegi sorrend:
+
+A. GetStatus valos koordinata + AbsoluteMove:
+   alkalmazason beluli abszolut pozicio mentheto.
+
+B. Nincs koordinata, de SetPreset/GotoPreset van:
+   kameraoldali preset mentheto.
+
+C. Csak RelativeMove:
+   finombeallitas lehetseges, de nem nevezheto abszolut pozicionak.
+
+D. Csak ContinuousMove:
+   idoalapu becsles lehet, de mindig ESTIMATED jelolessel es alapbol kikapcsolva.
+
+E. Nincs biztonsagos mod:
+   poziciomentes letiltva, kozertheto magyarazattal.
+
+Tarolando named view mezok:
+- view_id
+- name
+- source
+- profile_token
+- preset_token
+- pan, tilt, zoom
+- coordinate-space URI-k
+- created_utc
+- updated_utc
+- reliability
+- notes
+
+Koordinata nem masolhato masik kamerara kompatibilis coordinate space igazolasa
+nelkul.
+
+
+14. KAMERANKENTI ES LEPESENKENTI SEBESSEG
+=========================================
+
+Kamerankenti alapok:
+- manual_pan_speed
+- manual_tilt_speed
+- manual_zoom_speed
+- preset_pan_speed
+- preset_tilt_speed
+- preset_zoom_speed
+- fine_adjust_speed
+- fine_adjust_step
+- default_transition_speed_pan
+- default_transition_speed_tilt
+- default_transition_speed_zoom
+- default_move_timeout_s
+- default_settle_s
+- default_dwell_s
+
+Lepesenkenti feluliras:
+- speed_pan
+- speed_tilt
+- speed_zoom
+- move_s
+- move_timeout_s
+- settle_s
+- dwell_s
+
+Ha a kamera nem tamogat preset-speedet:
+- GUI mezot le kell tiltani;
+- „Camera controls preset speed internally” uzenet;
+- unsupported mezot nem szabad elkuldeni.
+
+Fine adjust:
+1. RelativeMove elonyben;
+2. egyebkent nagyon rovid, korlatozott ContinuousMove;
+3. kotelezo Stop;
+4. Emergency Stop megszakitja.
+
+PTZ speed nem azonos a video bitrataval.
+
+
+15. VIDEO MINOSEG DIAGNOSZTIKA
+==============================
+
+Ha elerheto, jelenjen meg:
+- felbontas px-ben;
+- configured/actual frame rate frame/s-ban;
+- codec;
+- configured/measured bitrate bit/s vagy Mbit/s;
+- GOP/keyframe info;
+- dropped frames;
+- decode latency ms-ban;
+- reconnect count;
+- aktualis PTZ speed;
+- preview backend.
+
+Optikai motion blur jellemzoen megvilagitas/expozicio problema.
+Makroblokkolas jellemzoen bitrate/codec/GOP problema.
+Szaggatas jellemzoen halozat/puffer/dekoder problema.
+A lassabb PTZ csokkentheti a kepkockankenti elmozdulast, de nem garantalt megoldas.
+
+Az elso implementacio ne modositsa automatikusan a bitrate-et, exposure-t, GOP-ot
+vagy codecet.
+
+
+16. PERSISTENS DIAGNOSZTIKAI FAJLOK
+===================================
+
+Tervezett fajlok:
+
+  diagnostics/environment_capability_report.json
+  diagnostics/environment_capability_report.txt
+  diagnostics/last_startup_diagnostics.txt
+  diagnostics/camera_<stable_id>_capabilities.json
+  diagnostics/camera_<stable_id>_capabilities.txt
+
+Kornyezeti riport:
+- app-, Python-, Windows-, architektura- es Tk-verzio;
+- Pillow/OpenCV/python-vlc/libVLC;
+- ONVIF CLI;
+- BAT/config eleresi ut;
+- irasi jogok;
+- preview backendek;
+- hianyzo kotelezo/opcionalis modulok;
+- importhibak;
+- fallback;
+- utolso sikeres start/mock/discovery test.
+
+A core GUI lehetoseg szerint induljon el opcionalis modulok nelkul. Preview fallback:
+OpenCV/VLC -> snapshot -> OFF.
+
+Riportokban nincs credential.
+
+
+17. PROJECT_PROGRESS_LOG.TXT
+============================
+
+Ez a projekt atadasanak legfontosabb kovetelmenye.
+
+A fajl append-only, es tartalmazza:
+- aktualis verzio/statusz;
+- feature matrix;
+- nyitott es lezart BUG-ID-k;
+- TEST-ID-k es pontos modszerek;
+- dependency/capability allapot;
+- minden RUN-ID;
+- modosított fajlok, meretek es sorszámok;
+- tenyleges valtozasok;
+- teszteredmenyek;
+- security checkek;
+- artifactok es checkpointok;
+- ismert korlatok;
+- EXACT NEXT ACTION;
+- clean stop statusz.
+
+Fontos statuszok:
+- NOT_STARTED
+- PLANNED
+- IN_PROGRESS
+- IMPLEMENTED_UNVERIFIED
+- VERIFIED_STATIC
+- VERIFIED_MOCK
+- VERIFIED_WINDOWS
+- VERIFIED_NETWORK
+- VERIFIED_HARDWARE
+- BLOCKED
+- REGRESSION
+- DEFERRED
+- REMOVED
+
+Hiba csak tesztbizonyitekkal lehet FIXED_VERIFIED.
+Nem lefuttatott tesztet tilos sikeresnek allitani.
+Valos Windows/BAT/RTSP/ONVIF/kamera tesztet kulon kell jelolni.
+
+Minden jovobeli futtatas elejen:
+1. a naplo teljes olvasasa;
+2. tenyleges fajlok auditja;
+3. ledger es forras osszevetese;
+4. uj RUN bejegyzes nyitasa.
+
+Futtatas vegen:
+1. modositasok;
+2. hibak;
+3. tesztek;
+4. nem kesz pontok;
+5. artifactok;
+6. pontos kovetkezo lepes;
+7. checkpoint.
+
+
+18. JELENLEGI BIZTOS ES NEM BIZTOS ALLAPOT
+==========================================
+
+A korabbi visszajelzesek es a projekt kepei alapjan biztos vagy erosen valoszinu:
+- nagy egyfajlos Tkinter GUI letezik;
+- config.txt, BAT, README es requirements letezik;
+- mock kamerak es patrol motor letezik;
+- GUI elrendezes mukodik;
+- 4 x 2 kamera grid letezik;
+- manual PTZ, Start/Pause/Resume/Stop es Emergency Stop letezik;
+- discovery motor es GUI integracio reszben vagy nagyrészt implementalt;
+- BAT halozati wrapper fejlesztes tortent;
+- tobb checkpoint ZIP keszult;
+- py_compile es mock tesztek korabban tobbszor sikeresek voltak.
+
+AKTUALIS FORRASAUDIT NELKUL NEM SZABAD KESZNEK NYILVANITANI:
+- PROJECT_PROGRESS_LOG.txt teljes integraciojat;
+- discovery valos Windows multicast mukodeset;
+- real ONVIF CLI template-eket;
+- live video es overlayt;
+- execution number migraciot;
+- office-fan/PING_PONG loopot;
+- automatic WAIT/default logikat;
+- named views es position capture funkciot;
+- teljes per-camera speed tuningot;
+- valos WET2440 hardvertesztet;
+- RTSP backend valos tesztjet;
+- BAT teljes nativ Windows tesztjet.
+
+
+19. FEJLESZTESI PRIORITAS A KOVETKEZO CHATBEN
+=============================================
+
+1. Legfrissebb ZIP kibontasa.
+2. PROJECT_PROGRESS_LOG.txt teljes olvasasa vagy ujraepitese.
+3. Tenyleges forrasaudit.
+4. py_compile, pyflakes es jelenlegi self-testek.
+5. Ledger-forras elteresek rogzitese.
+6. Discovery es config-add workflow befejezese.
+7. Persistens dependency/capability riportok.
+8. Video backend es selected-camera preview.
+9. Video statusz-overlay.
+10. Execution order.
+11. Safe default/inherited timing es speed.
+12. Office-fan templates es PING_PONG.
+13. Per-camera tuning.
+14. READ POSITION / SAVE VIEW.
+15. Beginner/Advanced mode.
+16. Teljes mock/static/regresszios teszt.
+17. Friss ledger es checkpoint ZIP.
+18. Valos Windows/hardver tesztelési terv.
+
+
+20. ATADASI UTASITAS AZ UJ CHAT SZAMARA
+=======================================
+
+Az uj chatben a feltoltott checkpoint ZIP es a PROJECT_PROGRESS_LOG.txt az
+elsodleges igazsagforras. Ez a kontextusfajl az eredetet es a celokat magyarazza.
+
+Az uj chatnek ezt kell tennie:
+
+1. Teljesen olvassa el ezt a fajlt.
+2. Teljesen olvassa el a PROJECT_PROGRESS_LOG.txt fajlt.
+3. Bontsa ki a legfrissebb checkpoint ZIP-et.
+4. Hasonlitsa ossze a naplot a tenyleges forrassal.
+5. Keszitsen biztonsagi masolatot.
+6. Futtassa a rendelkezesre allo teszteket.
+7. Ne tervezzen uj architekturat.
+8. Ne adjon reszlet-patcheket; teljes fajlokat adjon vissza.
+9. Minden valtozast, BUG-ID-t es TEST-ID-t fuzzen a naplohoz.
+10. A ledger EXACT NEXT ACTION pontjatol folytassa.
+
+Javasolt uj-chat kezdouzenet:
+
+"Folytasd es fejezd be a Windows PTZ Patrol Controller projektemet.
+A feltoltott checkpoint ZIP a tenyleges aktualis forras. A
+PROJECT_PROGRESS_LOG.txt a fejlesztesi naplo, ez a kontextusfajl pedig a projekt
+eredetet es vegso elkepzeleset irja le.
+
+Eloszor olvasd el teljesen mindket TXT-fajlt, majd auditáld a ZIP tartalmat.
+Hasonlitsd ossze a ledgert a forrassal, keszits backupot, es futtasd a jelenlegi
+teszteket. A PROJECT_PROGRESS_LOG.txt EXACT NEXT ACTION pontjatol folytasd.
+
+Tartsd meg az egy nagy ptz_patrol_gui.py, egy ptz_commands.bat es egy config.txt
+architekturát. Minden modosítast, hibat, tesztmodszert, eredmenyt, korlatot es
+kovetkezo lepest append-only modon rogzits a PROJECT_PROGRESS_LOG.txt fajlban.
+Ne kerj koztes jovahagyast. Ne kezdd ujra a projektet. Teljes fajlokat es
+letoltheto checkpoint/final ZIP-et adj vissza." 
+
+
+21. BIZTONSAGI ES REALITASI KORLATOK
+===================================
+
+A sandboxban ellenorizheto:
+- Python szintaxis;
+- importok;
+- config parser;
+- mock kamerak;
+- patrol logika;
+- worker izolacio;
+- loop generálas;
+- dependency fallback;
+- credential redakcio;
+- diagnosztikai reportok;
+- mock video/overlay.
+
+Valos Windowson/hardveren ellenorizendo:
+- BAT nativ viselkedes;
+- Windows adapter es ARP parsing;
+- WS-Discovery multicast;
+- WET2440 hitelesites;
+- valodi ONVIF port/XAddr;
+- valodi ONVIF CLI syntax;
+- PTZ/preset kepessegek;
+- GetStatus pozicio;
+- SetPreset/GotoPreset;
+- RTSP URI es codec;
+- VLC/OpenCV decoder;
+- fizikai motorsebesseg;
+- motion blur es bitrate finomhangolas.
+
+A program nem helyettesit fix kamerat kritikus bizonyiteki vagy biztonsagi
+pozicioban. Az automatikus mozgas idoszakos megfigyelest ad, nem egyideju teljes
+lefedettseget.
+
+
+22. VEGSO CEL
+=============
+
+Egy megbizhato, helyi halozaton mukodo, felho nelkuli Windows alkalmazas, amely:
+- tobb ONVIF/PTZ kamerat kezel;
+- kamerankent fuggetlen loopot futtat;
+- kezdobarat sablonokat ad;
+- kezi PTZ-t es Emergency Stopot ad;
+- snapshotot vagy selected live videot mutat;
+- a kepen statuszt es hibajavitasi tanacsot jelenit meg;
+- kepesseg alapon ment poziciot vagy presetet;
+- kamerankent hangolhato mozgasi sebesseget hasznal;
+- discovery/diagnosztika alapjan azonosít es csoportosit eszkozoket;
+- hianyzo moduloknal degradalt modba valt, nem omlik ossze;
+- minden fejlesztesi futast, hibat es tesztet append-only naploban megoriz;
+- checkpointtal barmelyik uj chat vagy fejleszto szamara folytathato.
+
+====================================================
+DOKUMENTUM VEGE
+====================================================

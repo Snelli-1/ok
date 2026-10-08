@@ -1,0 +1,21 @@
+class OnvifCameraBridge:
+    def connect(self):
+        pass
+
+    def disconnect(self):
+        pass
+
+    def get_status(self):
+        pass
+
+    def get_presets(self):
+        pass
+
+    def goto_preset(self, preset_id):
+        pass
+
+    def continuous_move(self, pan_speed, tilt_speed, zoom_speed=0):
+        pass
+
+    def stop(self):
+        pass
