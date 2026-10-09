@@ -482,7 +482,7 @@ class MockCameraBridge:
         return {"pan": self.current_position["pan"], "tilt": self.current_position["tilt"], "zoom": self.current_position["zoom"], "reliable": True}
 
     def move_to_preset(self, preset_token: str) -> bool:
-        mapping = {"preset_home": {"pan": 0, "tilt": 0, "zoom": 0}, "preset_left": {"pan": -20, "tilt": 0, "zoom": 0}, "preset_right": {"pan": 20, "tilt": 0, "zoom": 0}, "HOME": {"pan": 0, "tilt": 0, "zoom": 0}, "LEFT": {"pan": -20, "tilt": 0, "zoom": 0}, "RIGHT": {"pan": 20, "tilt": 0, "zoom": 0}} 
+        mapping = {"preset_home": {"pan": 0, "tilt": 0, "zoom": 0}, "preset_left": {"pan": -20, "tilt": 0, "zoom": 0}, "preset_right": {"pan": 20, "tilt": 0, "zoom": 0}, "HOME": {"pan": 0, "tilt": 0, "zoom": 0}, "LEFT": {"pan": -20, "tilt": 0, "zoom": 0}, "RIGHT": {"pan": 20, "tilt": 0, "zoom": 0}}
         token = str(preset_token).strip()
         if token in mapping:
             self.current_position = mapping[token].copy()
@@ -563,6 +563,21 @@ class CameraWorker(threading.Thread):
         self.position_reliability = PositionReliability.UNSYNCED
         self.state = CameraState.ERROR if category not in {FailureCategory.POSITION} else CameraState.UNSYNCED
 
+    def _mark_unsynced(self, message: str) -> None:
+        self.last_failure_category = FailureCategory.POSITION.value
+        self.last_error_message = message
+        self.position_reliability = PositionReliability.UNSYNCED
+        self.state = CameraState.UNSYNCED
+
+    def safe_to_move(self) -> bool:
+        if self.dry_run:
+            return False
+        if self.state in {CameraState.UNSYNCED, CameraState.ERROR, CameraState.PAUSED}:
+            return False
+        if self.position_reliability == PositionReliability.UNSYNCED:
+            return False
+        return True
+
     def _guard_real_command(self, action_name: str) -> bool:
         if self.dry_run:
             self._record_failure(FailureCategory.UNKNOWN, f"dry_run blocked real {action_name}")
@@ -572,6 +587,9 @@ class CameraWorker(threading.Thread):
             return False
         if self.bridge is None:
             self._record_failure(FailureCategory.CAPABILITY, f"no bridge available for {action_name}")
+            return False
+        if not self.safe_to_move():
+            self._record_failure(FailureCategory.POSITION, f"unsafe to send real movement for {action_name}")
             return False
         return True
 
@@ -640,8 +658,7 @@ class CameraWorker(threading.Thread):
                     if not self._guard_real_command(action):
                         continue
                     if not self.bridge.stop():
-                        self._record_failure(FailureCategory.POSITION, "stop failed; camera state may be unsynced")
-                        self.state = CameraState.UNSYNCED
+                        self._mark_unsynced("stop failed; camera state may be unsynced")
                     else:
                         self.state = CameraState.IDLE
                     continue
@@ -652,10 +669,12 @@ class CameraWorker(threading.Thread):
                     tilt_velocity = (float(step.tilt_steps) / max(1.0, float(step.move_s))) if step.tilt_steps else 0.0
                     ok = self.bridge.continuous_move(pan_velocity, tilt_velocity, float(step.zoom), timeout_s=max(0.1, float(step.move_s)))
                     if not ok:
-                        self._record_failure(FailureCategory.POSITION, "continuous move failed")
-                        self.state = CameraState.UNSYNCED
+                        self._mark_unsynced("continuous move failed")
                         continue
-                    self.bridge.stop()
+                    stop_ok = self.bridge.stop()
+                    if not stop_ok:
+                        self._mark_unsynced("continuous move stop failed; camera state is UNSYNCED")
+                        continue
                     self.position_reliability = PositionReliability.ESTIMATED
                     time.sleep(max(0.0, float(step.settle_s)))
                     continue
@@ -724,8 +743,11 @@ class CameraWorker(threading.Thread):
                         self.bridge.continuous_move(0.0, -velocity, 0.0, timeout_s=0.5)
                     elif direction == "DOWN":
                         self.bridge.continuous_move(0.0, velocity, 0.0, timeout_s=0.5)
-                    self.bridge.stop()
-                    self.position_reliability = PositionReliability.ESTIMATED
+                    stop_ok = self.bridge.stop()
+                    if not stop_ok:
+                        self._mark_unsynced("manual move stop failed; camera state is UNSYNCED")
+                    else:
+                        self.position_reliability = PositionReliability.ESTIMATED
                     self.state = CameraState.IDLE
 
                 elif cmd_type == CommandType.GOTO_PRESET.value:
@@ -756,7 +778,9 @@ class CameraWorker(threading.Thread):
                     else:
                         self.position_reliability = PositionReliability.CALIBRATED_ESTIMATE
                         self.state = CameraState.MOVING
-                        self.bridge.stop()
+                    stop_ok = self.bridge.stop()
+                    if not stop_ok:
+                        self._mark_unsynced("preset move stop failed; camera state is UNSYNCED")
                     self.state = CameraState.IDLE
 
                 elif cmd_type == CommandType.ABSOLUTE_MOVE.value:
@@ -778,7 +802,9 @@ class CameraWorker(threading.Thread):
                     else:
                         self.position_reliability = PositionReliability.MEASURED
                         self.state = CameraState.MOVING
-                        self.bridge.stop()
+                    stop_ok = self.bridge.stop()
+                    if not stop_ok:
+                        self._mark_unsynced("absolute move stop failed; camera state is UNSYNCED")
                     self.state = CameraState.IDLE
 
                 elif cmd_type == CommandType.RELATIVE_MOVE.value:
@@ -796,7 +822,9 @@ class CameraWorker(threading.Thread):
                     else:
                         self.position_reliability = PositionReliability.ESTIMATED
                         self.state = CameraState.MOVING
-                        self.bridge.stop()
+                    stop_ok = self.bridge.stop()
+                    if not stop_ok:
+                        self._mark_unsynced("relative move stop failed; camera state is UNSYNCED")
                     self.state = CameraState.IDLE
 
                 elif cmd_type == CommandType.HOME.value:
@@ -936,7 +964,7 @@ class PatrolEngine:
             return {"ok": False, "reason": "camera missing"}
         worker.push_command(CommandType.ABSOLUTE_MOVE.value, {"pan": pan, "tilt": tilt, "zoom": zoom})
         time.sleep(0.2)
-        return {"ok": worker.last_failure_category is None or worker.last_failure_category not in {FailureCategory.POSITION.value, FailureCategory.CAPABILITY.value}, "reason": worker.last_error_message}
+        return {"ok": worker.last_failure_category is None or worker.last_failure_category not in {FailureCategory.POSITION.value, FailureCategory.CAPABILITY.value}, "reason": worker.last_error_message, "status": worker.last_status}
 
     def relative_move(self, camera_id: str, pan_delta: float, tilt_delta: float, zoom_delta: float) -> Dict[str, Any]:
         worker = self.workers.get(camera_id)
@@ -944,7 +972,7 @@ class PatrolEngine:
             return {"ok": False, "reason": "camera missing"}
         worker.push_command(CommandType.RELATIVE_MOVE.value, {"pan_delta": pan_delta, "tilt_delta": tilt_delta, "zoom_delta": zoom_delta})
         time.sleep(0.2)
-        return {"ok": worker.last_failure_category is None or worker.last_failure_category not in {FailureCategory.POSITION.value, FailureCategory.CAPABILITY.value}, "reason": worker.last_error_message}
+        return {"ok": worker.last_failure_category is None or worker.last_failure_category not in {FailureCategory.POSITION.value, FailureCategory.CAPABILITY.value}, "reason": worker.last_error_message, "status": worker.last_status}
 
     def discover_camera(self, camera_id: str) -> Dict[str, Any]:
         worker = self.workers.get(camera_id)
@@ -960,8 +988,7 @@ class PatrolEngine:
             return {"ok": False, "reason": "camera missing"}
         worker.push_command(CommandType.VALIDATE_REAL_MOVE.value, {"pan": pan, "tilt": tilt, "zoom": zoom})
         time.sleep(0.2)
-        return {"ok": worker.last_status.get("reliable", False), "reason": worker.last_error_message,
-                "status": worker.last_status}
+        return {"ok": worker.last_status.get("reliable", False), "reason": worker.last_error_message, "status": worker.last_status}
 
     def stop_all(self) -> None:
         for worker in self.workers.values():
