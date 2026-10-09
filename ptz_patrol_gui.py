@@ -101,10 +101,14 @@ class CommandType(str, Enum):
     EMERGENCY_STOP = "EMERGENCY_STOP"
     MANUAL_MOVE = "MANUAL_MOVE"
     GOTO_PRESET = "GOTO_PRESET"
+    MOVE_TO_PRESET = "MOVE_TO_PRESET"
+    ABSOLUTE_MOVE = "ABSOLUTE_MOVE"
+    RELATIVE_MOVE = "RELATIVE_MOVE"
     READ_STATUS = "READ_STATUS"
     HOME = "HOME"
     REFRESH = "REFRESH"
     DISCOVER = "DISCOVER"
+    VALIDATE_REAL_MOVE = "VALIDATE_REAL_MOVE"
 
 
 class PositionReliability(str, Enum):
@@ -251,11 +255,14 @@ class OnvifCameraBridge:
                 data = service.GetProfiles()
                 out = []
                 for item in data:
-                    out.append({
-                        "token": getattr(item, "token", ""),
-                        "name": getattr(item, "name", ""),
+                    token = getattr(item, "token", "")
+                    name = getattr(item, "name", "")
+                    profile = {
+                        "token": token,
+                        "name": name,
                         "ptz_configuration": getattr(item, "PTZConfiguration", None),
-                    })
+                    }
+                    out.append(profile)
                 self.profiles = out
                 if out:
                     self.default_profile_token = out[0].get("token", "")
@@ -302,13 +309,82 @@ class OnvifCameraBridge:
             pass
         return {"pan": 0, "tilt": 0, "zoom": 0, "reliable": False}
 
+    def _profile_token_for_move(self) -> Optional[str]:
+        if self.default_profile_token:
+            return self.default_profile_token
+        for profile in self.profiles:
+            token = profile.get("token")
+            if token:
+                return token
+        return None
+
+    def _coerce_preset_token(self, value: str) -> str:
+        value = str(value).strip()
+        for preset in self.presets:
+            token = str(preset.get("token", ""))
+            name = str(preset.get("name", "")).upper()
+            if value.upper() == name or value == token:
+                return token
+        return value
+
     def move_to_preset(self, preset_token: str) -> bool:
         if not self.connected or self._client is None:
             return False
+        token = self._coerce_preset_token(preset_token)
+        if not token:
+            return False
+        profile_token = self._profile_token_for_move()
+        if profile_token is None:
+            return False
         try:
             service = self._client.service
-            if hasattr(service, "GotoPreset") and self.default_profile_token:
-                service.GotoPreset({"ProfileToken": self.default_profile_token, "PresetToken": preset_token})
+            if hasattr(service, "GotoPreset"):
+                service.GotoPreset({"ProfileToken": profile_token, "PresetToken": token})
+                return True
+        except Exception:
+            return False
+        return False
+
+    def move_to_preset_by_name(self, preset_name: str) -> bool:
+        return self.move_to_preset(preset_name)
+
+    def absolute_move(self, pan: float, tilt: float, zoom: float) -> bool:
+        if not self.connected or self._client is None:
+            return False
+        profile_token = self._profile_token_for_move()
+        if profile_token is None:
+            return False
+        try:
+            service = self._client.service
+            if hasattr(service, "AbsoluteMove"):
+                service.AbsoluteMove({
+                    "ProfileToken": profile_token,
+                    "Position": {
+                        "PanTilt": {"x": float(pan), "y": float(tilt)},
+                        "Zoom": {"x": float(zoom)},
+                    },
+                })
+                return True
+        except Exception:
+            return False
+        return False
+
+    def relative_move(self, pan_delta: float, tilt_delta: float, zoom_delta: float) -> bool:
+        if not self.connected or self._client is None:
+            return False
+        profile_token = self._profile_token_for_move()
+        if profile_token is None:
+            return False
+        try:
+            service = self._client.service
+            if hasattr(service, "RelativeMove"):
+                service.RelativeMove({
+                    "ProfileToken": profile_token,
+                    "Translation": {
+                        "PanTilt": {"x": float(pan_delta), "y": float(tilt_delta)},
+                        "Zoom": {"x": float(zoom_delta)},
+                    },
+                })
                 return True
         except Exception:
             return False
@@ -318,11 +394,14 @@ class OnvifCameraBridge:
                         zoom_velocity: float = 0.0, timeout_s: float = 1.0) -> bool:
         if not self.connected or self._client is None:
             return False
+        profile_token = self._profile_token_for_move()
+        if profile_token is None:
+            return False
         try:
             service = self._client.service
-            if hasattr(service, "ContinuousMove") and self.default_profile_token:
+            if hasattr(service, "ContinuousMove"):
                 service.ContinuousMove({
-                    "ProfileToken": self.default_profile_token,
+                    "ProfileToken": profile_token,
                     "Velocity": {"x": float(pan_velocity), "y": float(tilt_velocity), "z": float(zoom_velocity)},
                 })
                 time.sleep(timeout_s)
@@ -334,10 +413,13 @@ class OnvifCameraBridge:
     def stop(self) -> bool:
         if not self.connected or self._client is None:
             return False
+        profile_token = self._profile_token_for_move()
+        if profile_token is None:
+            return False
         try:
             service = self._client.service
-            if hasattr(service, "Stop") and self.default_profile_token:
-                service.Stop({"ProfileToken": self.default_profile_token, "PanTilt": True, "Zoom": True})
+            if hasattr(service, "Stop"):
+                service.Stop({"ProfileToken": profile_token, "PanTilt": True, "Zoom": True})
                 return True
         except Exception:
             return False
@@ -348,7 +430,25 @@ class OnvifCameraBridge:
             name = str(item.get("name", "")).upper()
             if name in {"HOME", "MAIN", "DEFAULT"}:
                 return self.move_to_preset(str(item.get("token", "")))
+        profile_token = self._profile_token_for_move()
+        if profile_token is None:
+            return False
+        try:
+            service = self._client.service
+            if hasattr(service, "GotoHomePosition"):
+                service.GotoHomePosition({"ProfileToken": profile_token})
+                return True
+        except Exception:
+            return False
         return False
+
+    def validate_real_move(self, pan: float, tilt: float, zoom: float) -> Dict[str, Any]:
+        result = {"ok": False, "reasons": [], "bounds": {"pan": [ -26.0, 26.0 ], "tilt": [-26.0, 26.0], "zoom": [0.0, 1.0]}}
+        for name, value, bounds in [("pan", pan, (-26.0, 26.0)), ("tilt", tilt, (-26.0, 26.0)), ("zoom", zoom, (0.0, 1.0))]:
+            if value < bounds[0] or value > bounds[1]:
+                result["reasons"].append(f"{name} out of bounds: {value} not in {bounds}")
+        result["ok"] = len(result["reasons"]) == 0 and bool(self.connected)
+        return result
 
 
 class MockCameraBridge:
@@ -382,11 +482,31 @@ class MockCameraBridge:
         return {"pan": self.current_position["pan"], "tilt": self.current_position["tilt"], "zoom": self.current_position["zoom"], "reliable": True}
 
     def move_to_preset(self, preset_token: str) -> bool:
-        mapping = {"preset_home": {"pan": 0, "tilt": 0, "zoom": 0}, "preset_left": {"pan": -20, "tilt": 0, "zoom": 0}, "preset_right": {"pan": 20, "tilt": 0, "zoom": 0}} 
-        if preset_token in mapping:
-            self.current_position = mapping[preset_token].copy()
+        mapping = {"preset_home": {"pan": 0, "tilt": 0, "zoom": 0}, "preset_left": {"pan": -20, "tilt": 0, "zoom": 0}, "preset_right": {"pan": 20, "tilt": 0, "zoom": 0}, "HOME": {"pan": 0, "tilt": 0, "zoom": 0}, "LEFT": {"pan": -20, "tilt": 0, "zoom": 0}, "RIGHT": {"pan": 20, "tilt": 0, "zoom": 0}} 
+        token = str(preset_token).strip()
+        if token in mapping:
+            self.current_position = mapping[token].copy()
+            return True
+        lookup = {item["name"].upper(): item["token"] for item in self.presets}
+        if token.upper() in lookup:
+            self.current_position = mapping[lookup[token.upper()]].copy()
             return True
         return False
+
+    def move_to_preset_by_name(self, preset_name: str) -> bool:
+        return self.move_to_preset(preset_name)
+
+    def absolute_move(self, pan: float, tilt: float, zoom: float) -> bool:
+        if pan < -26 or pan > 26 or tilt < -26 or tilt > 26 or zoom < 0 or zoom > 1:
+            return False
+        self.current_position = {"pan": pan, "tilt": tilt, "zoom": zoom}
+        return True
+
+    def relative_move(self, pan_delta: float, tilt_delta: float, zoom_delta: float) -> bool:
+        self.current_position["pan"] = max(-26.0, min(26.0, self.current_position["pan"] + pan_delta))
+        self.current_position["tilt"] = max(-26.0, min(26.0, self.current_position["tilt"] + tilt_delta))
+        self.current_position["zoom"] = max(0.0, min(1.0, self.current_position["zoom"] + zoom_delta))
+        return True
 
     def continuous_move(self, pan_velocity: float = 0.0, tilt_velocity: float = 0.0, zoom_velocity: float = 0.0, timeout_s: float = 1.0) -> bool:
         self.current_position["pan"] += int(round(pan_velocity * 10 * timeout_s))
@@ -399,6 +519,14 @@ class MockCameraBridge:
 
     def home(self) -> bool:
         return self.move_to_preset("preset_home")
+
+    def validate_real_move(self, pan: float, tilt: float, zoom: float) -> Dict[str, Any]:
+        result = {"ok": False, "reasons": [], "bounds": {"pan": [-26.0, 26.0], "tilt": [-26.0, 26.0], "zoom": [0.0, 1.0]}}
+        for name, value, bounds in [("pan", pan, (-26.0, 26.0)), ("tilt", tilt, (-26.0, 26.0)), ("zoom", zoom, (0.0, 1.0))]:
+            if value < bounds[0] or value > bounds[1]:
+                result["reasons"].append(f"{name} out of bounds: {value} not in {bounds}")
+        result["ok"] = len(result["reasons"]) == 0 and self.connected
+        return result
 
 
 def resolve_bridge(camera: CameraConfig, mock_mode: bool = False) -> Any:
@@ -446,6 +574,14 @@ class CameraWorker(threading.Thread):
             self._record_failure(FailureCategory.CAPABILITY, f"no bridge available for {action_name}")
             return False
         return True
+
+    def _validate_real_move_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.bridge is None:
+            return {"ok": False, "reasons": ["bridge unavailable"], "bounds": {"pan": [-26.0, 26.0], "tilt": [-26.0, 26.0], "zoom": [0.0, 1.0]}}
+        pan = float(payload.get("pan", 0.0))
+        tilt = float(payload.get("tilt", 0.0))
+        zoom = float(payload.get("zoom", 0.0))
+        return self.bridge.validate_real_move(pan, tilt, zoom)
 
     def _maybe_wait_for_resume(self) -> None:
         while self.pause_event.is_set():
@@ -526,7 +662,7 @@ class CameraWorker(threading.Thread):
                 if action == StepAction.RELATIVE_MOVE.value:
                     if not self._guard_real_command(action):
                         continue
-                    ok = self.bridge.continuous_move(float(step.pan_steps) / 10.0, float(step.tilt_steps) / 10.0, float(step.zoom) / 10.0, timeout_s=max(0.1, float(step.move_s)))
+                    ok = self.bridge.relative_move(float(step.pan_steps) / 10.0, float(step.tilt_steps) / 10.0, float(step.zoom) / 10.0)
                     if not ok:
                         self._record_failure(FailureCategory.POSITION, "relative move failed")
                     else:
@@ -603,6 +739,66 @@ class CameraWorker(threading.Thread):
                         self.position_reliability = PositionReliability.CALIBRATED_ESTIMATE
                     self.state = CameraState.IDLE
 
+                elif cmd_type == CommandType.MOVE_TO_PRESET.value:
+                    preset_name = str(payload.get("preset") or payload.get("preset_name") or self.camera.home_preset)
+                    validation = self._validate_real_move_payload({"pan": 0.0, "tilt": 0.0, "zoom": 0.0})
+                    if self.dry_run:
+                        self._record_failure(FailureCategory.UNKNOWN, f"dry_run blocked real move to preset {preset_name}")
+                        continue
+                    if not validation["ok"]:
+                        self._record_failure(FailureCategory.POSITION, "; ".join(validation["reasons"]))
+                        continue
+                    if not self._guard_real_command("move to preset"):
+                        continue
+                    ok = self.bridge.move_to_preset_by_name(preset_name)
+                    if not ok:
+                        self._record_failure(FailureCategory.CAPABILITY, f"preset move failed: {preset_name}")
+                    else:
+                        self.position_reliability = PositionReliability.CALIBRATED_ESTIMATE
+                        self.state = CameraState.MOVING
+                        self.bridge.stop()
+                    self.state = CameraState.IDLE
+
+                elif cmd_type == CommandType.ABSOLUTE_MOVE.value:
+                    pan = float(payload.get("pan", 0.0))
+                    tilt = float(payload.get("tilt", 0.0))
+                    zoom = float(payload.get("zoom", 0.0))
+                    validation = self._validate_real_move_payload({"pan": pan, "tilt": tilt, "zoom": zoom})
+                    if self.dry_run:
+                        self._record_failure(FailureCategory.UNKNOWN, f"dry_run blocked absolute move to {pan}/{tilt}/{zoom}")
+                        continue
+                    if not validation["ok"]:
+                        self._record_failure(FailureCategory.POSITION, "; ".join(validation["reasons"]))
+                        continue
+                    if not self._guard_real_command("absolute move"):
+                        continue
+                    ok = self.bridge.absolute_move(pan, tilt, zoom)
+                    if not ok:
+                        self._record_failure(FailureCategory.POSITION, f"absolute move failed: pan={pan}, tilt={tilt}, zoom={zoom}")
+                    else:
+                        self.position_reliability = PositionReliability.MEASURED
+                        self.state = CameraState.MOVING
+                        self.bridge.stop()
+                    self.state = CameraState.IDLE
+
+                elif cmd_type == CommandType.RELATIVE_MOVE.value:
+                    pan_delta = float(payload.get("pan_delta", 0.0))
+                    tilt_delta = float(payload.get("tilt_delta", 0.0))
+                    zoom_delta = float(payload.get("zoom_delta", 0.0))
+                    if self.dry_run:
+                        self._record_failure(FailureCategory.UNKNOWN, f"dry_run blocked relative move {pan_delta}/{tilt_delta}/{zoom_delta}")
+                        continue
+                    if not self._guard_real_command("relative move"):
+                        continue
+                    ok = self.bridge.relative_move(pan_delta, tilt_delta, zoom_delta)
+                    if not ok:
+                        self._record_failure(FailureCategory.POSITION, "relative move command failed")
+                    else:
+                        self.position_reliability = PositionReliability.ESTIMATED
+                        self.state = CameraState.MOVING
+                        self.bridge.stop()
+                    self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.HOME.value:
                     if not self._guard_real_command("home"):
                         continue
@@ -657,9 +853,15 @@ class CameraWorker(threading.Thread):
                             "supports_status": True,
                             "supports_goto_preset": True,
                             "supports_continuous": True,
-                            "supports_absolute": False,
-                            "supports_relative": False,
+                            "supports_absolute": True,
+                            "supports_relative": True,
                         }
+                    self.state = CameraState.IDLE
+
+                elif cmd_type == CommandType.VALIDATE_REAL_MOVE.value:
+                    answer = self._validate_real_move_payload(payload)
+                    self.last_status = {"pan": payload.get("pan", 0.0), "tilt": payload.get("tilt", 0.0), "zoom": payload.get("zoom", 0.0), "reliable": answer["ok"]}
+                    self.position_reliability = PositionReliability.MEASURED if answer["ok"] else PositionReliability.UNSYNCED
                     self.state = CameraState.IDLE
 
                 else:
@@ -720,6 +922,30 @@ class PatrolEngine:
         for worker in self.workers.values():
             worker.push_command(CommandType.EMERGENCY_STOP.value, {})
 
+    def move_to_preset(self, camera_id: str, preset: str) -> Dict[str, Any]:
+        worker = self.workers.get(camera_id)
+        if worker is None:
+            return {"ok": False, "reason": "camera missing"}
+        worker.push_command(CommandType.MOVE_TO_PRESET.value, {"preset": preset})
+        time.sleep(0.2)
+        return {"ok": worker.last_failure_category is None or worker.last_failure_category != FailureCategory.CAPABILITY.value, "reason": worker.last_error_message}
+
+    def absolute_move(self, camera_id: str, pan: float, tilt: float, zoom: float) -> Dict[str, Any]:
+        worker = self.workers.get(camera_id)
+        if worker is None:
+            return {"ok": False, "reason": "camera missing"}
+        worker.push_command(CommandType.ABSOLUTE_MOVE.value, {"pan": pan, "tilt": tilt, "zoom": zoom})
+        time.sleep(0.2)
+        return {"ok": worker.last_failure_category is None or worker.last_failure_category not in {FailureCategory.POSITION.value, FailureCategory.CAPABILITY.value}, "reason": worker.last_error_message}
+
+    def relative_move(self, camera_id: str, pan_delta: float, tilt_delta: float, zoom_delta: float) -> Dict[str, Any]:
+        worker = self.workers.get(camera_id)
+        if worker is None:
+            return {"ok": False, "reason": "camera missing"}
+        worker.push_command(CommandType.RELATIVE_MOVE.value, {"pan_delta": pan_delta, "tilt_delta": tilt_delta, "zoom_delta": zoom_delta})
+        time.sleep(0.2)
+        return {"ok": worker.last_failure_category is None or worker.last_failure_category not in {FailureCategory.POSITION.value, FailureCategory.CAPABILITY.value}, "reason": worker.last_error_message}
+
     def discover_camera(self, camera_id: str) -> Dict[str, Any]:
         worker = self.workers.get(camera_id)
         if worker is None:
@@ -727,6 +953,15 @@ class PatrolEngine:
         worker.push_command(CommandType.DISCOVER.value, {})
         time.sleep(0.2)
         return worker.discovery
+
+    def validate_real_move(self, camera_id: str, pan: float, tilt: float, zoom: float) -> Dict[str, Any]:
+        worker = self.workers.get(camera_id)
+        if worker is None:
+            return {"ok": False, "reason": "camera missing"}
+        worker.push_command(CommandType.VALIDATE_REAL_MOVE.value, {"pan": pan, "tilt": tilt, "zoom": zoom})
+        time.sleep(0.2)
+        return {"ok": worker.last_status.get("reliable", False), "reason": worker.last_error_message,
+                "status": worker.last_status}
 
     def stop_all(self) -> None:
         for worker in self.workers.values():
@@ -853,6 +1088,7 @@ class PTZPatrolApp:
         ttk.Button(actions, text="Stop", command=self.stop_patrol).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(actions, text="Emergency Stop", command=self.emergency_stop).pack(side=tk.LEFT)
         ttk.Button(actions, text="Discover", command=self.discover).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="Preset Test", command=self.preset_test).pack(side=tk.LEFT, padx=(8, 0))
 
         self.status_var = tk.StringVar(value="Status: ready | dry_run ON | mock_mode ON")
         ttk.Label(self.frame, textvariable=self.status_var).pack(anchor=tk.W, pady=(8, 0))
@@ -898,13 +1134,19 @@ class PTZPatrolApp:
         info = self.engine.discover_camera(self.camera.camera_id)
         self.status_var.set(f"Status: discovered {len(info.get('profiles', []))} profiles and {len(info.get('presets', []))} presets")
 
+    def preset_test(self) -> None:
+        if self.root is None:
+            return
+        result = self.engine.move_to_preset(self.camera.camera_id, "HOME")
+        self.status_var.set(f"Status: preset test -> {result}")
+
     def run(self) -> None:
         if self.root is not None:
             self.root.mainloop()
 
 
 def run_cli_tests() -> Dict[str, Any]:
-    results: Dict[str, Any] = {"py_compile": True, "config": True, "mock_test": True, "patrol_loop": True, "safety_state": True, "discovery": True}
+    results: Dict[str, Any] = {"py_compile": True, "config": True, "mock_test": True, "patrol_loop": True, "safety_state": True, "discovery": True, "phase5_move_validation": True, "phase5_bounded_move": True}
     try:
         import py_compile
         py_compile.compile("ptz_patrol_gui.py", doraise=True)
@@ -921,8 +1163,10 @@ def run_cli_tests() -> Dict[str, Any]:
     try:
         bridge = MockCameraBridge()
         assert bridge.connect()
-        assert bridge.move_to_preset("preset_left")
+        assert bridge.move_to_preset("LEFT")
         assert bridge.get_status()["pan"] < 0
+        assert bridge.absolute_move(10, 5, 0.5)
+        assert bridge.relative_move(1, 0, 0)
     except Exception:
         results["mock_test"] = False
 
@@ -957,6 +1201,24 @@ def run_cli_tests() -> Dict[str, Any]:
     except Exception:
         results["discovery"] = False
 
+    try:
+        bridge = MockCameraBridge()
+        validation = bridge.validate_real_move(5.0, 3.0, 0.75)
+        assert validation["ok"] is True
+        invalid = bridge.validate_real_move(100.0, 3.0, 0.75)
+        assert invalid["ok"] is False
+        assert len(invalid["reasons"]) >= 1
+    except Exception:
+        results["phase5_move_validation"] = False
+
+    try:
+        bridge = MockCameraBridge()
+        assert bridge.absolute_move(15, 10, 0.6) is True
+        assert bridge.relative_move(3, 0, 0.1) is True
+        assert bridge.absolute_move(999, 0, 0.5) is False
+    except Exception:
+        results["phase5_bounded_move"] = False
+
     return results
 
 
@@ -967,6 +1229,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mock-test", action="store_true", help="Run mock camera validation")
     parser.add_argument("--discovery-mock-test", action="store_true", help="Run mock discovery validation")
     parser.add_argument("--check-device-profiles", action="store_true", help="Check profile discovery capability")
+    parser.add_argument("--phase5", action="store_true", help="Run Phase 5 validation for real move safety")
     return parser.parse_args()
 
 
@@ -998,6 +1261,13 @@ def main() -> int:
     if args.check_device_profiles:
         print("CHECK_DEVICE_PROFILES: PASS, no problems found")
         return 0
+
+    if args.phase5:
+        outcome = run_cli_tests()
+        print("PHASE5_VALIDATION:")
+        for key in ["phase5_move_validation", "phase5_bounded_move"]:
+            print(f"  - {key}: {'PASS' if outcome.get(key, False) else 'FAIL'}")
+        return 0 if all(outcome.get(k, False) for k in ["phase5_move_validation", "phase5_bounded_move"]) else 1
 
     if tk is None:
         print(f"PTZ Patrol Controller {APP_VERSION} (headless mode)")
