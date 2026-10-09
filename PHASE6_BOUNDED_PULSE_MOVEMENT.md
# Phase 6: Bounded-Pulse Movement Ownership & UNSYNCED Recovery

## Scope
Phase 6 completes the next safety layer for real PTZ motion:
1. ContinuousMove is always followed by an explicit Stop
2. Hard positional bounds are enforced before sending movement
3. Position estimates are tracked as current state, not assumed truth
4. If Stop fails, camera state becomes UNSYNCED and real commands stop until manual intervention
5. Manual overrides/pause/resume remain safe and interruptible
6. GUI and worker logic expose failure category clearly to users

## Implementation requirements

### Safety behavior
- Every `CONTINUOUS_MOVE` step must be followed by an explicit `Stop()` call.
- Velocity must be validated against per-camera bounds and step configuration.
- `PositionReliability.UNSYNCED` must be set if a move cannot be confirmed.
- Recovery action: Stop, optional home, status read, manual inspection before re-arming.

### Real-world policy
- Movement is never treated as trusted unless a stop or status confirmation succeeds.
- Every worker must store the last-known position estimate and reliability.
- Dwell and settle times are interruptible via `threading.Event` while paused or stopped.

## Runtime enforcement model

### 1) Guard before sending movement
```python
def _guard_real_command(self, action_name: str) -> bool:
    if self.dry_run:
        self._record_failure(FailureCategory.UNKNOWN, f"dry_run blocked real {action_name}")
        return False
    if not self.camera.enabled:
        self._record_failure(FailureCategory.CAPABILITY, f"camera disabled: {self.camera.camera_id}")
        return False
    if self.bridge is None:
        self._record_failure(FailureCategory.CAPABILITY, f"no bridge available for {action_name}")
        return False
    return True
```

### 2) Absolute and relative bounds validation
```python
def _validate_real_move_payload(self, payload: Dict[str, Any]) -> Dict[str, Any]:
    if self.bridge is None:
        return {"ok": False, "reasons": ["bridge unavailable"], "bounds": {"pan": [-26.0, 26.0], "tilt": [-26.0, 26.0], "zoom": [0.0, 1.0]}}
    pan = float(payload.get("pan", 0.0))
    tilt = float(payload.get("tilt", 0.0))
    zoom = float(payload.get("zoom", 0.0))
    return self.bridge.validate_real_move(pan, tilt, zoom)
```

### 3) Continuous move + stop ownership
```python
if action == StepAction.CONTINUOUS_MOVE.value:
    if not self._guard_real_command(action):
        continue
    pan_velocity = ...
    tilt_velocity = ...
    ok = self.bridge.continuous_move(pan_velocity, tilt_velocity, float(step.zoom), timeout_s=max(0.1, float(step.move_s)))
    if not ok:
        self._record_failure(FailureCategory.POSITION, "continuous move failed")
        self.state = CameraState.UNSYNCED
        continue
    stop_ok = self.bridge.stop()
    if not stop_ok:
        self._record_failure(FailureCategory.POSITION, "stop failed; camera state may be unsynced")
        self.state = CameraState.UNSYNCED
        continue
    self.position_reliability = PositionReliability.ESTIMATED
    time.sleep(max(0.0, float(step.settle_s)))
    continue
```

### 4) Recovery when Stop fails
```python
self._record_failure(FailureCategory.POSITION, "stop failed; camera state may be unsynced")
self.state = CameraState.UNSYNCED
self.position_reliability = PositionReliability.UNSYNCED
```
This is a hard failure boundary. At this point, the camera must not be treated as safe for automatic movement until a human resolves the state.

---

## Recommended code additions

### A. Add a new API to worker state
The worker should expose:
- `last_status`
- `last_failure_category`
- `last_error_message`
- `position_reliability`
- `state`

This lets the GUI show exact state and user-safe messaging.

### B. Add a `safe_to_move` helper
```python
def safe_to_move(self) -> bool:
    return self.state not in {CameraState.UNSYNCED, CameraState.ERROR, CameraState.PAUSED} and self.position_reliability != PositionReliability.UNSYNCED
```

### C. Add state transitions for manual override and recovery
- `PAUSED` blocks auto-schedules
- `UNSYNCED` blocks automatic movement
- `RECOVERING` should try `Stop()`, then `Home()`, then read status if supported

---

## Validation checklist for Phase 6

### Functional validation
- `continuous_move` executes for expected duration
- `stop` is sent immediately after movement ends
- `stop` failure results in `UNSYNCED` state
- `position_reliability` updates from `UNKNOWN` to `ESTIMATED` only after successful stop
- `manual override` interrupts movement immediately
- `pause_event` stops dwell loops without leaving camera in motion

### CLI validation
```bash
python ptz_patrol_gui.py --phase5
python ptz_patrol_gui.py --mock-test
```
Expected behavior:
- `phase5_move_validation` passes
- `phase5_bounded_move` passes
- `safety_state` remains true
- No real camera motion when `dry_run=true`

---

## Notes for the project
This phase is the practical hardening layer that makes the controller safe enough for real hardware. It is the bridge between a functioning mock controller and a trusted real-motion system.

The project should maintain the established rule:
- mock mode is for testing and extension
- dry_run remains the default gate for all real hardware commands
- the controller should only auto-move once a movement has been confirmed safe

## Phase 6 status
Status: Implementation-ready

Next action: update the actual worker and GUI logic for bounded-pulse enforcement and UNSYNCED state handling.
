@@ -1,0 +1,144 @@
+# Phase 6: Bounded-Pulse Movement Ownership & UNSYNCED Recovery
+
+## Scope
+Phase 6 completes the next safety layer for real PTZ motion:
+1. ContinuousMove is always followed by an explicit Stop
+2. Hard positional bounds are enforced before sending movement
+3. Position estimates are tracked as current state, not assumed truth
+4. If Stop fails, camera state becomes UNSYNCED and real commands stop until manual intervention
+5. Manual overrides/pause/resume remain safe and interruptible
+6. GUI and worker logic expose failure category clearly to users
+
+## Implementation requirements
+
+### Safety behavior
+- Every `CONTINUOUS_MOVE` step must be followed by an explicit `Stop()` call.
+- Velocity must be validated against per-camera bounds and step configuration.
+- `PositionReliability.UNSYNCED` must be set if a move cannot be confirmed.
+- Recovery action: Stop, optional home, status read, manual inspection before re-arming.
+
+### Real-world policy
+- Movement is never treated as trusted unless a stop or status confirmation succeeds.
+- Every worker must store the last-known position estimate and reliability.
+- Dwell and settle times are interruptible via `threading.Event` while paused or stopped.
+
+## Runtime enforcement model
+
+### 1) Guard before sending movement
+```python
+def _guard_real_command(self, action_name: str) -> bool:
+    if self.dry_run:
+        self._record_failure(FailureCategory.UNKNOWN, f"dry_run blocked real {action_name}")
+        return False
+    if not self.camera.enabled:
+        self._record_failure(FailureCategory.CAPABILITY, f"camera disabled: {self.camera.camera_id}")
+        return False
+    if self.bridge is None:
+        self._record_failure(FailureCategory.CAPABILITY, f"no bridge available for {action_name}")
+        return False
+    return True
+```
+
+### 2) Absolute and relative bounds validation
+```python
+def _validate_real_move_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if self.bridge is None:
+        return {"ok": False, "reasons": ["bridge unavailable"], "bounds": {"pan": [-26.0, 26.0], "tilt": [-26.0, 26.0], "zoom": [0.0, 1.0]}}
+    pan = float(payload.get("pan", 0.0))
+    tilt = float(payload.get("tilt", 0.0))
+    zoom = float(payload.get("zoom", 0.0))
+    return self.bridge.validate_real_move(pan, tilt, zoom)
+```
+
+### 3) Continuous move + stop ownership
+```python
+if action == StepAction.CONTINUOUS_MOVE.value:
+    if not self._guard_real_command(action):
+        continue
+    pan_velocity = ...
+    tilt_velocity = ...
+    ok = self.bridge.continuous_move(pan_velocity, tilt_velocity, float(step.zoom), timeout_s=max(0.1, float(step.move_s)))
+    if not ok:
+        self._record_failure(FailureCategory.POSITION, "continuous move failed")
+        self.state = CameraState.UNSYNCED
+        continue
+    stop_ok = self.bridge.stop()
+    if not stop_ok:
+        self._record_failure(FailureCategory.POSITION, "stop failed; camera state may be unsynced")
+        self.state = CameraState.UNSYNCED
+        continue
+    self.position_reliability = PositionReliability.ESTIMATED
+    time.sleep(max(0.0, float(step.settle_s)))
+    continue
+```
+
+### 4) Recovery when Stop fails
+```python
+self._record_failure(FailureCategory.POSITION, "stop failed; camera state may be unsynced")
+self.state = CameraState.UNSYNCED
+self.position_reliability = PositionReliability.UNSYNCED
+```
+This is a hard failure boundary. At this point, the camera must not be treated as safe for automatic movement until a human resolves the state.
+
+---
+
+## Recommended code additions
+
+### A. Add a new API to worker state
+The worker should expose:
+- `last_status`
+- `last_failure_category`
+- `last_error_message`
+- `position_reliability`
+- `state`
+
+This lets the GUI show exact state and user-safe messaging.
+
+### B. Add a `safe_to_move` helper
+```python
+def safe_to_move(self) -> bool:
+    return self.state not in {CameraState.UNSYNCED, CameraState.ERROR, CameraState.PAUSED} and self.position_reliability != PositionReliability.UNSYNCED
+```
+
+### C. Add state transitions for manual override and recovery
+- `PAUSED` blocks auto-schedules
+- `UNSYNCED` blocks automatic movement
+- `RECOVERING` should try `Stop()`, then `Home()`, then read status if supported
+
+---
+
+## Validation checklist for Phase 6
+
+### Functional validation
+- `continuous_move` executes for expected duration
+- `stop` is sent immediately after movement ends
+- `stop` failure results in `UNSYNCED` state
+- `position_reliability` updates from `UNKNOWN` to `ESTIMATED` only after successful stop
+- `manual override` interrupts movement immediately
+- `pause_event` stops dwell loops without leaving camera in motion
+
+### CLI validation
+```bash
+python ptz_patrol_gui.py --phase5
+python ptz_patrol_gui.py --mock-test
+```
+Expected behavior:
+- `phase5_move_validation` passes
+- `phase5_bounded_move` passes
+- `safety_state` remains true
+- No real camera motion when `dry_run=true`
+
+---
+
+## Notes for the project
+This phase is the practical hardening layer that makes the controller safe enough for real hardware. It is the bridge between a functioning mock controller and a trusted real-motion system.
+
+The project should maintain the established rule:
+- mock mode is for testing and extension
+- dry_run remains the default gate for all real hardware commands
+- the controller should only auto-move once a movement has been confirmed safe
+
+## Phase 6 status
+Status: Implementation-ready
+
+Next action: update the actual worker and GUI logic for bounded-pulse enforcement and UNSYNCED state handling.
