@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import configparser
 import json
-import logging
 import os
 import queue
 import sys
@@ -11,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import tkinter as tk
@@ -105,6 +104,7 @@ class CommandType(str, Enum):
     READ_STATUS = "READ_STATUS"
     HOME = "HOME"
     REFRESH = "REFRESH"
+    DISCOVER = "DISCOVER"
 
 
 class PositionReliability(str, Enum):
@@ -209,6 +209,7 @@ class OnvifCameraBridge:
         self.profiles: List[Dict[str, Any]] = []
         self.presets: List[Dict[str, Any]] = []
         self.default_profile_token = ""
+        self.ptz_token = ""
         self._client = None
 
     def connect(self) -> bool:
@@ -241,7 +242,7 @@ class OnvifCameraBridge:
             pass
         return {"manufacturer": "", "model": "", "firmware": "", "serial": ""}
 
-    def get_profiles(self) -> List[Dict[str, Any]]:
+    def discover_profiles(self) -> List[Dict[str, Any]]:
         if not self.connected or self._client is None:
             return []
         try:
@@ -253,6 +254,7 @@ class OnvifCameraBridge:
                     out.append({
                         "token": getattr(item, "token", ""),
                         "name": getattr(item, "name", ""),
+                        "ptz_configuration": getattr(item, "PTZConfiguration", None),
                     })
                 self.profiles = out
                 if out:
@@ -262,7 +264,7 @@ class OnvifCameraBridge:
             pass
         return []
 
-    def get_presets(self) -> List[Dict[str, Any]]:
+    def discover_presets(self) -> List[Dict[str, Any]]:
         if not self.connected or self._client is None:
             return []
         try:
@@ -321,11 +323,7 @@ class OnvifCameraBridge:
             if hasattr(service, "ContinuousMove") and self.default_profile_token:
                 service.ContinuousMove({
                     "ProfileToken": self.default_profile_token,
-                    "Velocity": {
-                        "x": float(pan_velocity),
-                        "y": float(tilt_velocity),
-                        "z": float(zoom_velocity),
-                    },
+                    "Velocity": {"x": float(pan_velocity), "y": float(tilt_velocity), "z": float(zoom_velocity)},
                 })
                 time.sleep(timeout_s)
                 return True
@@ -346,22 +344,15 @@ class OnvifCameraBridge:
         return False
 
     def home(self) -> bool:
-        token = ""
         for item in self.presets:
             name = str(item.get("name", "")).upper()
             if name in {"HOME", "MAIN", "DEFAULT"}:
-                token = str(item.get("token", ""))
-                break
-        if not token:
-            return False
-        return self.move_to_preset(token)
+                return self.move_to_preset(str(item.get("token", "")))
+        return False
 
 
 class MockCameraBridge:
-    """Test-only mock camera. Never used as production hardware evidence."""
-
-    def __init__(self, host: str = "mock.local", username: str = "", password: str = "",
-                 port: int = 80, timeout: float = 2.0):
+    def __init__(self, host: str = "mock.local", username: str = "", password: str = "", port: int = 80, timeout: float = 2.0):
         self.host = host
         self.username = username
         self.password = password
@@ -381,28 +372,23 @@ class MockCameraBridge:
     def get_device_info(self) -> Dict[str, Any]:
         return self.device_info.copy()
 
-    def get_profiles(self) -> List[Dict[str, Any]]:
+    def discover_profiles(self) -> List[Dict[str, Any]]:
         return [dict(item) for item in self.profiles]
 
-    def get_presets(self) -> List[Dict[str, Any]]:
+    def discover_presets(self) -> List[Dict[str, Any]]:
         return [dict(item) for item in self.presets]
 
     def get_status(self) -> Dict[str, Any]:
         return {"pan": self.current_position["pan"], "tilt": self.current_position["tilt"], "zoom": self.current_position["zoom"], "reliable": True}
 
     def move_to_preset(self, preset_token: str) -> bool:
-        mapping = {
-            "preset_home": {"pan": 0, "tilt": 0, "zoom": 0},
-            "preset_left": {"pan": -20, "tilt": 0, "zoom": 0},
-            "preset_right": {"pan": 20, "tilt": 0, "zoom": 0},
-        }
+        mapping = {"preset_home": {"pan": 0, "tilt": 0, "zoom": 0}, "preset_left": {"pan": -20, "tilt": 0, "zoom": 0}, "preset_right": {"pan": 20, "tilt": 0, "zoom": 0}} 
         if preset_token in mapping:
             self.current_position = mapping[preset_token].copy()
             return True
         return False
 
-    def continuous_move(self, pan_velocity: float = 0.0, tilt_velocity: float = 0.0,
-                        zoom_velocity: float = 0.0, timeout_s: float = 1.0) -> bool:
+    def continuous_move(self, pan_velocity: float = 0.0, tilt_velocity: float = 0.0, zoom_velocity: float = 0.0, timeout_s: float = 1.0) -> bool:
         self.current_position["pan"] += int(round(pan_velocity * 10 * timeout_s))
         self.current_position["tilt"] += int(round(tilt_velocity * 10 * timeout_s))
         self.current_position["zoom"] += int(round(zoom_velocity * timeout_s))
@@ -441,6 +427,7 @@ class CameraWorker(threading.Thread):
         self.last_failure_category: Optional[str] = None
         self.last_error_message = ""
         self.current_patrol: Optional[Patrol] = None
+        self.discovery: Dict[str, Any] = {"device": {}, "profiles": [], "presets": [], "capabilities": {}}
 
     def _record_failure(self, category: FailureCategory, message: str) -> None:
         self.last_failure_category = category.value
@@ -489,11 +476,10 @@ class CameraWorker(threading.Thread):
                     self.state = CameraState.DWELLING
                     time.sleep(max(0.0, float(step.dwell_s)))
                     continue
-
                 if action in {StepAction.GOTO_PRESET.value, StepAction.ABSOLUTE_MOVE.value}:
                     if not self._guard_real_command(action):
                         continue
-                    ok = self.bridge.move_to_preset(str(step.target)) if action == StepAction.GOTO_PRESET.value else self.bridge.move_to_preset(str(step.target))
+                    ok = self.bridge.move_to_preset(str(step.target))
                     if not ok:
                         self._record_failure(FailureCategory.CAPABILITY, f"{action} rejected for target {step.target}")
                     else:
@@ -504,7 +490,6 @@ class CameraWorker(threading.Thread):
                         self.state = CameraState.DWELLING
                         time.sleep(max(0.0, float(step.dwell_s)))
                     continue
-
                 if action == StepAction.GOTO_HOME.value:
                     if not self._guard_real_command(action):
                         continue
@@ -515,7 +500,6 @@ class CameraWorker(threading.Thread):
                         self.position_reliability = PositionReliability.CALIBRATED_ESTIMATE
                     time.sleep(max(0.0, float(step.settle_s)))
                     continue
-
                 if action == StepAction.STOP.value:
                     if not self._guard_real_command(action):
                         continue
@@ -525,7 +509,6 @@ class CameraWorker(threading.Thread):
                     else:
                         self.state = CameraState.IDLE
                     continue
-
                 if action == StepAction.CONTINUOUS_MOVE.value:
                     if not self._guard_real_command(action):
                         continue
@@ -540,7 +523,6 @@ class CameraWorker(threading.Thread):
                     self.position_reliability = PositionReliability.ESTIMATED
                     time.sleep(max(0.0, float(step.settle_s)))
                     continue
-
                 if action == StepAction.RELATIVE_MOVE.value:
                     if not self._guard_real_command(action):
                         continue
@@ -552,8 +534,6 @@ class CameraWorker(threading.Thread):
                     self.bridge.stop()
                     time.sleep(max(0.0, float(step.settle_s)))
                     continue
-
-                # default safe behavior
                 self.state = CameraState.IDLE
 
             iterations += 1
@@ -668,6 +648,20 @@ class CameraWorker(threading.Thread):
                     self.pause_event.clear()
                     self.state = CameraState.IDLE
 
+                elif cmd_type == CommandType.DISCOVER.value:
+                    if self.bridge is not None:
+                        self.discovery["device"] = self.bridge.get_device_info() if hasattr(self.bridge, "get_device_info") else {}
+                        self.discovery["profiles"] = self.bridge.discover_profiles() if hasattr(self.bridge, "discover_profiles") else []
+                        self.discovery["presets"] = self.bridge.discover_presets() if hasattr(self.bridge, "discover_presets") else []
+                        self.discovery["capabilities"] = {
+                            "supports_status": True,
+                            "supports_goto_preset": True,
+                            "supports_continuous": True,
+                            "supports_absolute": False,
+                            "supports_relative": False,
+                        }
+                    self.state = CameraState.IDLE
+
                 else:
                     self.state = CameraState.IDLE
             except Exception as exc:
@@ -726,6 +720,14 @@ class PatrolEngine:
         for worker in self.workers.values():
             worker.push_command(CommandType.EMERGENCY_STOP.value, {})
 
+    def discover_camera(self, camera_id: str) -> Dict[str, Any]:
+        worker = self.workers.get(camera_id)
+        if worker is None:
+            return {"device": {}, "profiles": [], "presets": [], "capabilities": {}}
+        worker.push_command(CommandType.DISCOVER.value, {})
+        time.sleep(0.2)
+        return worker.discovery
+
     def stop_all(self) -> None:
         for worker in self.workers.values():
             worker.stop_worker()
@@ -763,11 +765,7 @@ def build_mock_patrol_steps() -> List[Dict[str, Any]]:
 
 def write_example_config(path: str = "config.txt") -> None:
     config = configparser.ConfigParser()
-    config["global"] = {
-        "mock_mode": "true",
-        "dry_run": "true",
-        "version": APP_VERSION,
-    }
+    config["global"] = {"mock_mode": "true", "dry_run": "true", "version": APP_VERSION}
     config["camera_cam01"] = {
         "name": "Camera 1",
         "host": "192.168.1.10",
@@ -781,10 +779,7 @@ def write_example_config(path: str = "config.txt") -> None:
         "dry_run": "true",
         "mock_mode": "true",
     }
-    config["patrol_default"] = {
-        "repeat_mode": RepeatMode.FOREVER.value,
-        "repeat_count": "1",
-    }
+    config["patrol_default"] = {"repeat_mode": RepeatMode.FOREVER.value, "repeat_count": "1"}
     with open(path, "w", encoding="utf-8") as fh:
         config.write(fh)
 
@@ -800,9 +795,9 @@ def load_config(path: str = "config.txt") -> Dict[str, Any]:
             data["global"][key] = value
     for section in config.sections():
         if section.startswith("camera_"):
-            camera_data = dict(config[section])
-            camera_data["camera_id"] = section.split("camera_", 1)[1]
-            data["cameras"].append(camera_data)
+            entry = dict(config[section])
+            entry["camera_id"] = section.split("camera_", 1)[1]
+            data["cameras"].append(entry)
         elif section.startswith("patrol_"):
             data["patrols"].append(dict(config[section]))
     return data
@@ -857,6 +852,7 @@ class PTZPatrolApp:
         ttk.Button(actions, text="Resume", command=self.resume_patrol).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(actions, text="Stop", command=self.stop_patrol).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(actions, text="Emergency Stop", command=self.emergency_stop).pack(side=tk.LEFT)
+        ttk.Button(actions, text="Discover", command=self.discover).pack(side=tk.LEFT, padx=(8, 0))
 
         self.status_var = tk.StringVar(value="Status: ready | dry_run ON | mock_mode ON")
         ttk.Label(self.frame, textvariable=self.status_var).pack(anchor=tk.W, pady=(8, 0))
@@ -896,13 +892,19 @@ class PTZPatrolApp:
         self.engine.emergency_stop()
         self.status_var.set("Status: emergency stop sent | safe mode active")
 
+    def discover(self) -> None:
+        if self.root is None:
+            return
+        info = self.engine.discover_camera(self.camera.camera_id)
+        self.status_var.set(f"Status: discovered {len(info.get('profiles', []))} profiles and {len(info.get('presets', []))} presets")
+
     def run(self) -> None:
         if self.root is not None:
             self.root.mainloop()
 
 
 def run_cli_tests() -> Dict[str, Any]:
-    results: Dict[str, Any] = {"py_compile": True, "config": True, "mock_test": True, "patrol_loop": True, "safety_state": True}
+    results: Dict[str, Any] = {"py_compile": True, "config": True, "mock_test": True, "patrol_loop": True, "safety_state": True, "discovery": True}
     try:
         import py_compile
         py_compile.compile("ptz_patrol_gui.py", doraise=True)
@@ -943,6 +945,17 @@ def run_cli_tests() -> Dict[str, Any]:
         assert worker.last_failure_category == FailureCategory.UNKNOWN.value
     except Exception:
         results["safety_state"] = False
+
+    try:
+        engine = PatrolEngine(mock_mode=True, dry_run=True)
+        camera = build_default_camera("cam01", "mock.local", mock_mode=True, dry_run=True)
+        worker = engine.add_camera(camera)
+        discovery = engine.discover_camera(camera.camera_id)
+        assert isinstance(discovery.get("profiles", []), list)
+        assert isinstance(discovery.get("presets", []), list)
+        worker.stop_worker()
+    except Exception:
+        results["discovery"] = False
 
     return results
 
