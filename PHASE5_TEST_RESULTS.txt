@@ -1,0 +1,47 @@
+PHASE 5 TEST RESULTS LOG
+========================
+
+[2026-10-09T09:00:00Z] Phase 5 Implementation Checkpoint
+STATUS: Ready for validation testing
+
+TEST ENVIRONMENT:
+- ptz_patrol_gui.py: Version 1.0.0
+- OnvifCameraBridge: Implemented with zeep client
+- MockCameraBridge: Full mock support (FULL, INTERMITTENT, LIMITED profiles)
+- CameraWorker: Thread-safe command processing
+- Config format: INI-style via configparser, atomic save
+
+COMPLETED CHECKS:
+✓ OnvifCameraBridge class defined with all required methods
+✓ _guard_real_command() enforces dry_run checks
+✓ _validate_real_move_payload() bounds checking (-26 to 26 pan/tilt, 0 to 1 zoom)
+✓ PositionReliability enum tracking (MEASURED, CALIBRATED_ESTIMATE, ESTIMATED, UNSYNCED, UNKNOWN)
+✓ FailureCategory classification (TIMEOUT, AUTH, UNSUPPORTED, NETWORK, CAPABILITY, POSITION, UNKNOWN)
+✓ PatrolEngine with independent CameraWorker threads
+✓ stop_event, pause_event for coordinated control
+✓ Emergency stop posts command to all workers
+✓ Config load/save with unknown-key preservation
+✓ Mock camera test (GOTO_PRESET, ABSOLUTE_MOVE, RELATIVE_MOVE)
+✓ CLI validation (--phase5, --mock-test, --check-config, --discovery-mock-test)
+
+PENDING TESTS:
+- Real ONVIF camera probe with ProfileToken discovery
+- Real GetPresets list enumeration
+- Real GetDeviceInformation lookup
+- Real GotoPreset movement (dry_run=true, no actual motion)
+- Real network error handling (timeout, auth failure, unsupported capability)
+- Windows Tkinter GUI rendering and config save
+- Multi-camera independent patrol loops
+- Position tracking across multiple move types
+
+NEXT STEPS:
+1. Run --phase5 CLI on Linux (CI/CD validation)
+2. Run --mock-test on Windows with Tkinter available
+3. Prepare real V380 Pro or compatible camera for probe
+4. Execute dry_run=true discovery and preset capture
+5. Test manual preset move (dry_run still true)
+6. Only then enable dry_run=false and observe real motion
+7. Run multi-camera patrol and log position reliability changes
+8. Checkpoint and release v1.0.0
+
+[END OF LOG]
