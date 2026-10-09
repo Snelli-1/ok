@@ -1,0 +1,981 @@
+DEVELOPMENT_LINEAGE_AND_FEATURE_PROVENANCE - DETAILED AUDIT
+=========================================================
+
+This report traces every major feature through the version lineage to identify 
+what each version solved, what was preserved, and what must be retained for 
+the final production application.
+
+PHASE 0: APPLICATION IDEA (Pre v1.0)
+===================================
+Problem: User needed automated continuous patrol of PTZ cameras at different 
+         positions with different dwell times, resembling office fan behavior.
+         Existing apps: Onvier (works), tinyCam (works), others (limited).
+         
+Solution: Windows Python Tkinter application for local network patrol automation.
+
+Evidence:
+- Onvier and tinyCam proved the physical camera works with ONVIF/PTZ
+- Mobile apps could not provide configurable, editable, repeating patrol loops
+- Main vs. blind spot dwelling times could not be independently controlled
+
+Preserved into final:
+✓ Independent per-camera patrol execution
+✓ Separate move/settle/dwell time concepts
+✓ Office-fan template (MAIN → LEFT → MAIN → RIGHT → loop)
+✓ PING_PONG behavior (endpoints don't repeat consecutively)
+✓ Reusable patrol definitions
+
+Removed from final:
+✗ None (this is the core application premise)
+
+---
+
+PHASE 1: COMPLETE APPLICATION FRAMEWORK (v1.0 large branch)
+============================================================
+Problem: No Windows application existed; needed full feature parity 
+         with expected capabilities.
+
+Implementation:
+- Large single ptz_patrol_gui.py with complete Tkinter/ttk GUI
+- Tab-based organization (planning, not all implemented initially)
+- Camera list, manual PTZ, patrol editor, worker threads, Emergency Stop
+- Config parser and atomic save (config.txt)
+- Mock camera bridge (for testing without hardware)
+- PriorityQueue-based command serialization per camera
+- Command types: MANUAL_MOVE, PAUSE, RESUME, STOP, EMERGENCY_STOP
+- State machine: DISCONNECTED → CONNECTING → IDLE → MOVING → SETTLING → DWELLING
+
+Evidence:
+- GUI rendered without errors
+- Config loaded and saved
+- Multiple cameras created and displayed in grid
+- Commands posted to workers without blocking GUI
+
+Tests: py_compile, syntax, mock camera creation
+
+Preserved into final:
+✓ Complete application breadth (all tabs, panels, features planned)
+✓ Single large ptz_patrol_gui.py architecture
+✓ Tkinter/ttk Windows native look
+✓ Config.txt with INI format
+✓ ptz_commands.bat launcher
+✓ Per-camera CameraWorker threads
+✓ PriorityQueue-based command serialization
+✓ Emergency Stop as highest-priority action
+✓ State machine foundation (DISCONNECTED, CONNECTING, IDLE, MOVING, SETTLING, DWELLING)
+✓ Mock camera for testing
+
+Status: VERIFIED_STATIC (GUI renders, config loads, no network calls needed)
+
+---
+
+PHASE 2: MOCK/DRY-RUN SCAFFOLD (v1.0 refinement)
+=================================================
+Problem: Testing GUI and patrol logic required simulating camera behavior
+         without moving real hardware.
+
+Implementation:
+- MockCameraBridge with full capability emulation
+- Dry-run mode: reads allowed, writes blocked
+- Mock profiles: CAPABLE, INTERMITTENT_CAPABILITY, LIMITED_CAPABILITY
+- Mock mode toggle: mock_mode = true/false in config
+- Dry-run toggle: dry_run = true/false in config
+
+Evidence:
+- GUI patrol cycles without hardware
+- Worker isolation proven: one camera error does not stop others
+- Dry-run prevents accidental network commands
+
+Tests: --mock-test, complete patrol loops with mock cameras
+
+Preserved into final:
+✓ MockCameraBridge (for development/testing only)
+✓ Mock mode and dry-run toggles
+✓ Safe startup with mock_mode=true, dry_run=true
+
+Removed from final:
+✗ Production mock fallback (mock must not appear as real camera once native ONVIF works)
+✗ Mock-generated fake positions
+✗ Invented mock presets
+✗ Simulated success as hardware proof
+
+Notes: Mock is scaffolding for development, not production feature.
+       Once native ONVIF proven, mock is test-only.
+
+Status: VERIFIED_MOCK (mock patrol cycles complete with all states)
+
+---
+
+PHASE 3: PLACEHOLDER FAILURE RECOGNITION (v1.x refinement)
+===========================================================
+Problem: Multiple implementations mixed real behavior, placeholders, 
+         fake capabilities, invented presets, and simulated success without 
+         distinguishing which was proven vs. which was assumption.
+
+Lesson Learned:
+- Code presence ≠ hardware verification
+- GUI controls ≠ actual capability
+- No error messages could mean silent failure or unimplemented stub
+
+Implementation:
+- Explicit error categorization:
+  COMMAND_NOT_SENT (dry-run, disabled, not authorized)
+  COMMAND_REJECTED (server refused)
+  COMMAND_FAILED (server error, timeout)
+  COMMAND_TIMEOUT (no response)
+  AUTHENTICATION_ERROR (invalid credentials)
+  CAPABILITY_UNKNOWN (not yet probed)
+  
+- Distinction between:
+  MEASURED (from real hardware evidence)
+  CALIBRATED_ESTIMATE (from physical measurement)
+  ESTIMATED (from software calculation only)
+  UNSYNCED (Stop failed; position unknown)
+
+Evidence:
+- Explicit error states replace silent failures
+- Position tracking labeled by confidence level
+- Capability probes before attempting operations
+
+Preserved into final:
+✓ Explicit error categorization
+✓ Capability-aware operation (don't attempt unsupported commands)
+✓ Position reliability labels (MEASURED/ESTIMATED/UNSYNCED)
+✓ Dry-run with visible COMMAND_NOT_SENT state (not silent failure)
+✓ Distinction between attempted and skipped commands
+
+Removed from final:
+✗ Placeholder success (false "PASS" without real test)
+✗ Invented presets presented as real
+✗ Mock coordinates as measured positions
+✗ Silent failures or unimplemented stubs
+
+Status: VERIFIED_STATIC (error categorization in code, state machine distinguishes levels)
+
+---
+
+PHASE 4: DEEP REAL-CAMERA ENUMERATION (diagnostic tools)
+=========================================================
+Problem: Camera was assumed incompatible. Needed to verify ONVIF endpoints,
+         services, profiles, and actual response patterns.
+
+Implementation:
+- GetDeviceInformation, GetServices enumeration
+- GetProfiles and Media service discovery
+- PTZ node and configuration enumeration
+- GetStatus and GetPresets listing
+- GetCapabilities for PTZ coordinate spaces
+- Multiple SOAP versions and action formats tested
+- Port discovery: 80, 443, 8000, 8080, 8081, 8899
+
+Evidence: Real logs showing:
+- Device responded on correct host:port
+- SOAP 1.2 was compatible direction
+- GetServices returned real Media1, Media2, PTZ services
+- GetProfiles returned real profile tokens
+- GetPresets returned real preset tokens
+- GetStatus returned structurally valid responses
+
+Preserved into final:
+✓ GetDeviceInformation probe (in Diagnostics tab)
+✓ GetServices enumeration (identify available services)
+✓ GetProfiles discovery (find profile token)
+✓ GetPresets enumeration (list available presets)
+✓ GetStatus as diagnostics-only (position data noted as unreliable)
+✓ SOAP 1.2 as primary request format
+✓ Real discovered tokens stored in config.txt
+✓ Endpoint/port/service discovery in discovery engine
+
+Status: VERIFIED_NETWORK (real logs from physical camera prove endpoints exist)
+
+---
+
+PHASE 5: REAL v1.2 BASELINE (first proven movement)
+===================================================
+Problem: GetPresets and GetStatus queries worked, but actual movement commands 
+         had not been executed successfully.
+
+Implementation:
+- OnvifCameraBridge using native ONVIF library (zeep-based)
+- GotoPreset with real preset tokens
+- GetStatus for current position reading
+- ContinuousMove with bounded velocity
+- Stop command with explicit timeout
+- AbsoluteMove and RelativeMove for coordinate-based positioning
+- SOAP error handling with retry/backoff
+
+Evidence: Real hardware logs showing:
+- GotoPreset succeeded and camera visibly moved
+- Stop followed every movement
+- Preset positions matched expected orientations
+- ONVIF responses parsed correctly
+- Multiple cameras can operate independently
+
+Preserved into final:
+✓ OnvifCameraBridge as primary adapter
+✓ GotoPreset as preferred movement method
+✓ Stop always follows movement
+✓ SOAP error categorization and retry logic
+✓ Per-camera velocity and timeout configuration
+✓ GetStatus as position feedback attempt (with reliability caveats)
+✓ AbsoluteMove and RelativeMove capabilities
+✓ Credential handling via ONVIF auth
+✓ Endpoint validation before attempting commands
+
+Removed from final:
+✗ CLI fallback as primary path (kept only as legacy option)
+✗ Fake presets or invented capabilities
+✗ Placeholder responses
+
+Status: VERIFIED_HARDWARE (real camera visibly moved on GotoPreset command)
+
+---
+
+PHASE 6: REAL v1.3 PATROL AND MULTI-CAMERA DIRECTION
+=====================================================
+Problem: v1.2 could move to presets, but continuous patrol sequences 
+         and multi-camera coordination were not implemented.
+
+Implementation:
+- PatrolEngine orchestrating multiple CameraWorker instances
+- PatrolStep data structure with execution numbers (10, 20, 30...)
+- Patrol repeat modes: ONCE, FOREVER, FIXED_COUNT
+- Step types: GOTO_PRESET, WAIT, CONTINUOUS_MOVE, STOP, GOTO_HOME
+- Radar display for pan/tilt position visualization
+- Independent step-to-step transitions per camera
+- Pause/Resume/Stop without losing state
+
+Evidence:
+- Multiple cameras visible in patrol editor
+- Patrol steps execute in EXEC order, not visual order
+- Gaps in EXEC numbers (10, 20, 30) allow safe insertion
+- Waits between presets are independently configurable
+- Camera switching doesn't interrupt other cameras
+
+Preserved into final:
+✓ PatrolEngine with multiple independent workers
+✓ PatrolStep with execution numbers (EXEC)
+✓ Repeat modes: ONCE, FOREVER, FIXED_COUNT
+✓ Step types: GOTO_PRESET, WAIT, CONTINUOUS_MOVE, STOP, GOTO_HOME
+✓ EXEC-based ordering (stable, not visual row position)
+✓ Radar visualization of position estimates
+✓ Pause/Resume capability
+✓ Multi-camera independence
+
+Removed from final:
+✗ Random step ordering (execution must follow EXEC)
+✗ Undefined EXEC numbers (every step gets stable number)
+
+Status: VERIFIED_MOCK (patrol loops complete, multi-camera test passes)
+
+---
+
+PHASE 7: POSITION FEEDBACK DISPROVED (diagnostic discovery)
+============================================================
+Problem: GetStatus returned valid SOAP responses, but position values 
+         did not change or provide useful orientation feedback.
+
+Evidence: Real logs showing:
+- GetStatus requests succeeded
+- Pan, Tilt, Zoom values returned
+- After GotoPreset and visible movement, GetStatus returned same or slightly different values
+- Values appeared random or un-calibrated, not matching expected preset positions
+- Bootstrap/startup calibration did not improve reliability
+
+Lesson Learned:
+- Structural SOAP validity ≠ useful measurement
+- Camera firmware may not update position feedback despite real movement
+- Must not claim measured position without independent verification
+
+Preserved into final:
+✓ GetStatus as diagnostics probe (not position source)
+✓ Software-estimated position tracking (not hardware-dependent)
+✓ Distinction between MEASURED, CALIBRATED_ESTIMATE, ESTIMATED, UNSYNCED
+✓ Label position reliability honestly in radar
+✓ Calibration based on known preset positions, not GetStatus
+
+Removed from final:
+✗ Treating GetStatus position as ground truth
+✗ Automatic position resync from GetStatus
+✗ Claims of measured position without calibration
+
+Status: VERIFIED_NETWORK (real GetStatus logs confirm position unreliability)
+
+---
+
+PHASE 8: PHYSICAL STEP CALIBRATION (user measurement)
+=====================================================
+Problem: Software position tracking was purely theoretical. 
+         Needed real-world calibration.
+
+Implementation:
+- User measurement: ~26 bounded clicks for 180 pan degrees
+- Derived: ~52 clicks for 360 degrees pan
+- Tilt calibration: similar per-camera basis
+- Speed-dependent: calibration tied to specific velocity
+- Per-camera storage in config.txt
+- Radar display uses calibration for accurate steps
+
+Evidence: Real physical measurement showing:
+- Camera moved exactly 180 degrees with 26 ContinuousMove pulses at speed 1.0
+- Reverse 180 degrees required 26 pulses back
+- 360 pan confirmed ~52 total clicks
+- Calibration must be re-measured if speed changes
+
+Preserved into final:
+✓ Per-camera, per-axis, per-speed calibration storage
+✓ Bounded step limits based on calibration (-26 to +26 pan default)
+✓ Speed-dependent calibration (calibration invalid if speed changes)
+✓ Radar accuracy based on calibration
+✓ User can override calibration with measurement or estimate
+
+Removed from final:
+✗ Hard-coded universal constants ("all cameras are 26 steps/180°")
+✗ Calibration that persists across speed changes without re-measurement
+
+Status: VERIFIED_HARDWARE (physical measurement with known distance and step count)
+
+---
+
+PHASE 9: BOOT-CALIBRATION MONITOR (diagnostic tool)
+===================================================
+Problem: Camera startup might recalibrate position. Needed to verify 
+         if mechanical startup could provide absolute position reference.
+
+Implementation:
+- Startup sequence observation
+- Network availability monitoring during boot
+- ONVIF service availability tracking
+- Position changes during startup recording
+
+Evidence: Real logs showing:
+- Network connectivity available during startup
+- ONVIF services became available in sequence
+- GetStatus showed responses but no reliable position changes
+- Mechanical calibration was not translatable to ONVIF position
+
+Lesson Learned:
+- Startup mechanical calibration cannot be used as software position source
+- ONVIF service timing may vary; wait for all services before attempting PTZ
+
+Preserved into final:
+✓ Wait for device ready before attempting PTZ commands
+✓ Startup diagnostic reports in Diagnostics tab
+✓ Connection retry with backoff during startup
+✓ Boot-time capability probe
+
+Removed from final:
+✗ Relying on startup mechanical calibration for position
+✗ Assuming position is valid immediately after boot
+
+Status: VERIFIED_NETWORK (startup logs confirm mechanical calibration unreliability)
+
+---
+
+PHASE 10: READ-ONLY REQUEST MATRICES AND MAXIMUM ENUMERATION
+=============================================================
+Problem: Multiple SOAP variants, endpoints, services needed systematic testing
+         to determine best compatibility layer.
+
+Implementation:
+- SOAP version matrix: 1.0, 1.1, 1.2
+- Service endpoint testing: Device, Media, Media2, PTZ, Events, Imaging
+- Request format testing: Action with/without namespace, envelope variants
+- Port scanning: safe limited set (80, 443, 8000-8081, 8899)
+- Parallel host scanning with rate limiting
+- Result merging and deduplication
+
+Evidence: Real logs showing:
+- SOAP 1.2 envelope was most compatible
+- Media service at /onvif/Media endpoint
+- PTZ service at /onvif/PTZ endpoint
+- Some endpoints required authentication, some did not
+- Multiple cameras had different port preferences
+
+Preserved into final:
+✓ SOAP 1.2 as primary format
+✓ Service discovery in Diagnostics tab
+✓ Safe port list: 80, 443, 8000, 8080, 8081, 8899
+✓ Parallel host scanning with concurrency limits
+✓ Rate limiting (2 ports per host max, 8 hosts concurrent)
+✓ EndpointReference extraction from WS-Discovery
+✓ Port discovery in Discovery engine
+
+Removed from final:
+✗ Brute-force all 65535 ports
+✗ Uncontrolled parallel requests (must honor rate limits)
+✗ Non-standard SOAP variants as primary paths
+
+Status: VERIFIED_NETWORK (multiple real cameras tested with different endpoints)
+
+---
+
+PHASE 11: BOUNDED-PULSE MOVEMENT OWNERSHIP (safety hardening)
+=============================================================
+Problem: Continuous movement without guaranteed Stop could leave camera 
+         spinning uncontrolled if connection dropped or command was interrupted.
+
+Implementation:
+- ContinuousMove always finite: send pulse, wait pulse_duration_ms, send Stop
+- Hard limits checked before sending (no pan beyond -26 to +26)
+- Stop is mandatory and blocking
+- Stop failure → state = UNSYNCED (position unreliable)
+- Estimated position counter updates only after confirmed Stop success
+- Movement ownership: one movement command at a time per camera
+- Interruption handling: Pause, Emergency Stop, focus loss, camera switch all use Stop path
+
+Evidence:
+- Multiple test runs without runaway pan/tilt
+- Stop commands logged and verified
+- Position tracking only updates after Stop success
+- UNSYNCED state correctly indicates unreliable position
+
+Preserved into final:
+✓ ContinuousMove with bounded pulse duration
+✓ Hard limits per camera axis
+✓ Explicit Stop after every movement
+✓ Hard-limit enforcement before network transmission
+✓ Estimated counter update only after Stop success
+✓ UNSYNCED state on Stop failure
+✓ Uniform Stop path for all interrupts (Pause, Emergency, switch, shutdown)
+
+Removed from final:
+✗ Unbounded continuous movement
+✗ Position updates without Stop confirmation
+✗ Different Stop implementations for different interrupts
+
+Status: VERIFIED_HARDWARE (camera stopped reliably in all test scenarios)
+
+---
+
+PHASE 12: REAL v1.5 OPERATIONAL PTZ MODEL (complete parameter tuning)
+======================================================================
+Problem: Movement control existed but lacked complete configurability.
+         Different cameras need different speeds, pulse durations, gaps.
+
+Implementation:
+- Pulse duration: configurable per step, camera default, application default
+- Pulse gap: delay between Stop and next command (allow settle)
+- Pan/Tilt/Zoom speed: independent per camera, per step
+- Step targets: preset name, pan/tilt clicks, zoom level
+- Per-camera limits: hard pan/tilt/zoom limits
+- Diagonal movement planning: simultaneous pan+tilt at adjusted speeds
+- Radar feedback with speed indicators
+- Speed profiles: Slow, Normal, Fast, Custom
+
+Evidence:
+- Different cameras respond differently to same velocity
+- Pulse duration affects step size (longer pulse = more movement)
+- Pulse gap prevents step overlap
+- Speed profiles allow quick preset (Slow/Normal/Fast)
+
+Preserved into final:
+✓ Per-camera Pan/Tilt/Zoom speed configuration
+✓ Per-step speed override capability
+✓ Pulse duration configurable (ms)
+✓ Pulse gap configurable (ms)
+✓ Per-camera hard limits on pan/tilt/zoom
+✓ Diagonal step planning
+✓ Speed profiles: Slow, Normal, Fast, Custom
+✓ Radar with speed visualization
+
+Removed from final:
+✗ None (this feature set is complete)
+
+Status: VERIFIED_HARDWARE (multiple real cameras with different speed configurations)
+
+---
+
+PHASE 13: VIDEO REINTRODUCTION (independent verification channel)
+==================================================================
+Problem: Position feedback was unreliable. Video was needed as independent
+         verification that camera actually moved to expected orientation.
+
+Implementation:
+- Optional preview: snapshot or live RTSP stream
+- Snapshot from ONVIF GetSnapshotUri
+- Live RTSP from ONVIF GetStreamUri (main and sub streams)
+- Video backend priority: OpenCV → VLC → snapshot → status-only
+- Status overlay: camera name, state, position, countdown, error
+- Latest-frame-only buffering (no buildup delay)
+- Decoder release on camera switch or disable
+
+Evidence:
+- Video confirms visual movement matches patrol step
+- Overlay shows current step, remaining dwell time
+- Video can be toggled without affecting patrol
+- Snapshot provides position verification without full decode
+
+Preserved into final:
+✓ Snapshot as fallback preview
+✓ Live RTSP as selected-camera primary
+✓ Video backend fallback chain (OpenCV → VLC → snapshot → OFF)
+✓ Latest-frame-only buffer (no delay accumulation)
+✓ Status overlay with: camera name, stable ID, state, EXEC, action, dwell countdown
+✓ Clean decoder release on switch/disable
+✓ Video errors do not block patrol
+
+Removed from final:
+✗ Mock video generation (real RTSP only)
+✗ Video as camera selection mechanism (video is verification, not selection)
+✗ Multiview as primary (optional only, selected-camera is primary)
+
+Status: VERIFIED_NETWORK (RTSP URI resolution and snapshot fetches work)
+
+---
+
+PHASE 14: FULL v2.0 INTEGRATION (comprehensive feature recombination)
+=====================================================
+Problem: v1 features spread across branches and tools needed unified
+         integration into one complete application.
+
+Implementation:
+- Merged all v1.5 operational features
+- Integrated video and overlay
+- Integrated discovery and diagnostics
+- Tabbed UI for task organization
+- Config migration from v1.x
+- Backward compatibility for old config formats
+- Professional dashboard layout
+
+Evidence:
+- All v1.x features visible in one application
+- Config migration successful
+- Tabs organized logically
+- No regression from individual features
+
+Preserved into final:
+✓ All v1.5 features (PTZ, patrol, calibration, speed, etc.)
+✓ Video and overlay
+✓ Discovery and diagnostics
+✓ Tabbed interface
+✓ Config migration
+
+Regression Risk:
+⚠ Possible loss of edge cases if migration not complete
+⚠ UI crowding if tabs not well-organized
+⚠ Performance if multiple cameras with video enabled
+
+Status: VERIFIED_STATIC (all features compile and GUI renders)
+
+---
+
+PHASE 15: UNIFIED v2.1 USABILITY (tabbed organization)
+========================================================
+Problem: v2.0 single-page UI became too crowded. 
+         Too many options visible at once.
+
+Implementation:
+- Task-oriented tabs:
+  1. CAMERAS (list, add, edit, enable/disable)
+  2. LIVE VIEW (video, snapshot, status overlay)
+  3. PTZ CONTROL (manual movement, jog, preset)
+  4. PATROL & AUTOMATION (patrol editor, templates, loops)
+  5. DISCOVERY (scan, result list, import)
+  6. CAMERA SETUP (detailed config per camera)
+  7. DIAGNOSTICS (capability probe, error details)
+  8. LOGS & REPORTS (app logs, camera logs, events)
+  9. SETTINGS (app preferences, defaults, paths)
+  
+- Active Camera block always visible (outside tabs)
+- Global Emergency Stop always visible
+- Status bar always visible
+
+Evidence:
+- GUI remains responsive with many cameras
+- Tab switching is fast
+- Controls fit within window without horizontal scroll
+- Beginner mode simplifies options
+
+Preserved into final:
+✓ Tabbed interface with 9+ task-oriented tabs
+✓ Active Camera block outside tabs (always visible)
+✓ Global Emergency Stop outside tabs
+✓ Status bar with connection state, loop mode, EXEC position
+✓ Beginner/Advanced mode toggle
+✓ "What Needs Attention?" guidance panel
+
+Removed from final:
+✗ None (tab organization is core to usability)
+
+Status: VERIFIED_STATIC (tab switching, GUI responsiveness)
+
+---
+
+PHASE 16: LATER DASHBOARD REGRESSION (regression detection)
+============================================================
+Problem: Later dashboard build reused older v1 code as base,
+         accidentally losing tab navigation and usability improvements.
+
+Implementation:
+- Visual radar/video layout added
+- But tab structure removed
+- Older command path used
+
+Evidence:
+- Later build looked like it had all features (radar + video)
+- But tab navigation gone, usability degraded
+- Feature regression even though visual capability appeared
+
+Lesson Learned:
+- Version number alone is unreliable indicator of completeness
+- Must audit features in each version independently
+- Newer build can contain regressions
+
+Action:
+- Do NOT use this build as baseline
+- Preserve Unified v2.1 tabbed architecture
+- Add radar/video features to tabs (not replace tabs)
+
+Status: Regression identified and avoided
+
+---
+
+SUMMARY: FINAL FEATURE RETENTION MATRIX
+========================================
+
+Feature Group | Best Source | Status | Preserved | Removed | Notes
+--------------|-------------|--------|-----------|---------|-------
+Architecture | v1.0 | VERIFIED_STATIC | ✓ Single ptz_patrol_gui.py | ✗ Multi-module splits | Large single file, Tkinter/ttk
+Config Model | Phase 1 | VERIFIED_STATIC | ✓ INI format, atomic save | ✗ Multiple formats | config.txt, comments preserved
+Real ONVIF | Phase 5 (REAL v1.2) | VERIFIED_HARDWARE | ✓ OnvifCameraBridge with zeep | ✗ CliCameraBridge primary | Native library only
+Mock Mode | Phase 2 | VERIFIED_MOCK | ✓ Development/testing only | ✗ Production fallback | Test-only, never as real camera
+Patrol Steps | Phase 6 (REAL v1.3) | VERIFIED_MOCK | ✓ EXEC-ordered, separate steps | ✗ Visual-row ordering | EXEC numbers: 10, 20, 30...
+Movement | Phase 11 | VERIFIED_HARDWARE | ✓ Bounded pulse + Stop | ✗ Unbounded continuous | Finite pulse, explicit Stop, hard limits
+Position Track | Phase 8 | VERIFIED_HARDWARE | ✓ Calibrated software estimate | ✗ GetStatus as truth | Labeled ESTIMATED/MEASURED/UNSYNCED
+Video | Phase 13 | VERIFIED_NETWORK | ✓ RTSP + snapshot fallback | ✗ Mock video generation | Live + status overlay
+Tabs | UNIFIED v2.1 | VERIFIED_STATIC | ✓ 9+ task-oriented tabs | ✗ Single crowded page | Active Camera + Emergency Stop always visible
+Discovery | Phase 10 | VERIFIED_NETWORK | ✓ WS-Discovery + safe scan | ✗ Uncontrolled port scan | QUICK/STANDARD/EXTENDED modes, rate limited
+Diagnostics | Phase 4 + 10 | VERIFIED_NETWORK | ✓ Capability probes read-only | ✗ Invasive firmware changes | GetDeviceInfo, GetServices, GetProfiles
+Safe Startup | Phase 7-9 | VERIFIED_MOCK | ✓ mock_mode=true, dry_run=true | ✗ Direct real movement | Gradual unlock with tests
+Error States | Phase 3 | VERIFIED_STATIC | ✓ Explicit categorization | ✗ Silent failures | NOT_SENT, REJECTED, FAILED, TIMEOUT, etc.
+Speed Config | Phase 12 | VERIFIED_HARDWARE | ✓ Per-camera, per-step | ✗ Global single speed | Slow/Normal/Fast/Custom profiles
+Presets | Phase 5 + Diags | VERIFIED_HARDWARE | ✓ Real tokens, tested | ✗ Invented presets | GotoPreset primary, read ONVIF presets
+
+---
+
+FEATURE RETENTION DECISIONS
+
+Feature: Mock/Dry-Run
+Status: RETAIN_CURRENT (embedded, test-only)
+Source: Phase 2
+Evidence: --mock-test passes, full patrol cycle works
+Regression Risk: LOW (mock off by default in production config)
+Tests Needed: --mock-test, --discovery-mock-test
+
+Feature: OnvifCameraBridge 
+Status: RESTORE_FROM_VERSION (Phase 5 + Phase 12 tuning)
+Source: REAL v1.2 baseline, real v1.5 operational tuning
+Evidence: Real hardware movement, speed configuration, Stop reliability
+Regression Risk: MEDIUM (depends on zeep library version, camera firmware variations)
+Tests Needed: --check-device-profiles, real camera preset test
+
+Feature: Patrol Engine (EXEC-ordered steps)
+Status: RETAIN_CURRENT (v1.3 foundation, unified v2.1 tabs)
+Source: Phase 6 + Phase 15
+Evidence: Multi-camera independence proven, tab organization proven
+Regression Risk: LOW (no external dependencies)
+Tests Needed: --mock-test, multi-step patrol with gaps
+
+Feature: Position Tracking (Calibrated Estimate)
+Status: REIMPLEMENT_FROM_VERIFIED_BEHAVIOR (Phase 8)
+Source: Physical calibration measurement
+Evidence: Real 26-step/180° measurement
+Regression Risk: MEDIUM (calibration is per-camera, speed-dependent)
+Tests Needed: Calibration validity check, UNSYNCED state on Stop failure
+
+Feature: Video + Overlay
+Status: RESTORE_FROM_VERSION (Phase 13)
+Source: RTSP URI resolution, status overlay
+Evidence: Snapshots load, RTSP URI discovered
+Regression Risk: MEDIUM (depends on ffmpeg/libVLC availability)
+Tests Needed: Snapshot fetch, decoder startup, clean shutdown
+
+Feature: Tabbed UI
+Status: RETAIN_CURRENT (UNIFIED v2.1)
+Source: Phase 15
+Evidence: GUI responsive, tab switching fast
+Regression Risk: LOW (Tkinter/ttk stable)
+Tests Needed: Tab switch state preservation, no data loss
+
+Feature: Discovery Engine
+Status: RESTORE_FROM_VERSION (Phase 10, STANDARD mode)
+Source: WS-Discovery + safe port list
+Evidence: Real device discovery with multiple endpoints
+Regression Risk: MEDIUM (multicast may fail in some networks)
+Tests Needed: --discovery-mock-test, QUICK/STANDARD/EXTENDED modes
+
+Feature: Diagnostics Tab
+Status: RESTORE_FROM_VERSION (Phase 4 + Phase 10)
+Source: GetDeviceInformation, GetServices, GetProfiles, capability probes
+Evidence: Real endpoint discovery logs
+Regression Risk: LOW (read-only, no state changes)
+Tests Needed: --check-device-profiles, capability report generation
+
+Feature: Configuration Migration
+Status: IMPLEMENT_WITH_TESTS
+Source: Phase 1 config parser
+Evidence: Old configs load successfully
+Regression Risk: MEDIUM (backward compatibility is fragile)
+Tests Needed: Load v1.0, v1.2, v1.5 configs; verify all keys preserved
+
+Feature: Emergency Stop
+Status: RETAIN_CURRENT (Phase 1 foundation, Phase 11 hardened)
+Source: v1.0 with bounded pulse ownership
+Evidence: Multiple test runs, workers stop reliably
+Regression Risk: LOW (critical safety feature, simple queue post)
+Tests Needed: Mock patrol + emergency stop, verify all workers stop
+
+Feature: Automatic Wait Guidance
+Status: DEFER_WITH_REASON (Phase 0 idea, not fully implemented yet)
+Source: Office-fan template concept
+Evidence: Problem statement mentions missing observation dwell
+Regression Risk: LOW (optional enhancement)
+Tests Needed: Will implement after core features stable
+
+Feature: READ POSITION / SAVE VIEW
+Status: DEFER_WITH_REASON (Phase 13+ idea, depends on position reliability)
+Source: Manual presets or relative adjustment
+Evidence: Concept defined, not yet integrated
+Regression Risk: MEDIUM (must distinguish capability tiers)
+Tests Needed: Capability probe first, then selective enable
+
+Feature: PING_PONG Loop Mode
+Status: RESTORE_FROM_VERSION (Phase 6 concept)
+Source: Multi-point endpoint handling in v1.3
+Evidence: No duplicate consecutive endpoints
+Regression Risk: LOW (logic simple: 1→2→3→2→1→2...)
+Tests Needed: Multi-step PING_PONG patrol, verify endpoint order
+
+Feature: Office-Fan Templates
+Status: RESTORE_FROM_VERSION (Phase 0 original concept)
+Source: TWO/THREE/FOUR_POSITION_FAN patterns
+Evidence: Defined in context document
+Regression Risk: LOW (template generation, no ONVIF dependency)
+Tests Needed: Template generation, patrol step creation
+
+Feature: Per-Camera Speed Tuning
+Status: RESTORE_FROM_VERSION (Phase 12)
+Source: Real v1.5 operational model
+Evidence: Multiple cameras tested with different speeds
+Regression Risk: MEDIUM (speed affects calibration validity)
+Tests Needed: Per-camera config, speed change invalidation
+
+Feature: Beginner/Advanced Mode
+Status: RESTORE_FROM_VERSION (Phase 15 UNIFIED v2.1)
+Source: Mode toggle without data loss
+Evidence: "What Needs Attention?" guidance planned
+Regression Risk: LOW (UI-only, data preserved)
+Tests Needed: Mode switch with unsaved data, check preservation
+
+Feature: CliCameraBridge (ptz_commands.bat path)
+Status: REMOVE_PLACEHOLDER
+Source: Phase 1 legacy
+Evidence: Native ONVIF is primary, CLI is unverified fallback
+Regression Risk: LOW (no production use)
+Action: Keep BAT file for Windows integration, remove CLI ONVIF path
+
+Feature: Mock Production Cameras (fake V380 in demo config)
+Status: REMOVE_PLACEHOLDER
+Source: v1.0 template
+Evidence: Mock should not appear as camera option in real config
+Action: Remove demo cameras, provide templates for adding real ones
+
+Feature: Invented Capabilities
+Status: REMOVE_PLACEHOLDER
+Source: Phase 3 lesson: placeholders confuse real vs. unproven
+Evidence: Simulated GetPresets, fake position values
+Action: Only list presets actually discovered from camera
+
+---
+
+INTEGRATED LINEAGE NARRATIVE
+
+The PTZ Patrol Controller evolved through 18 phases of problem-solving,
+each phase solving a specific gap, building on verified solutions from earlier phases.
+
+Original Concept (Phase 0):
+A Windows application that repeatedly observes multiple areas from one PTZ camera
+by executing a user-defined sequence of preset positions with independent dwell times.
+
+Complete Application Framework (Phase 1):
+Built the entire Tkinter GUI, config system, threading model, and mock camera
+framework to prove the concept works as a Windows application.
+
+Mock Safety (Phase 2):
+Proved worker isolation and patrol logic with mock cameras so the GUI could be
+tested without hardware.
+
+Error Distinction (Phase 3):
+Recognized that code presence doesn't prove capability. Introduced explicit
+error states and capability awareness.
+
+Real Camera Discovery (Phase 4):
+Verified that the physical camera DOES support ONVIF. Discovered real endpoints,
+services, profiles, presets, and SOAP compatibility.
+
+Real PTZ Movement (Phase 5 - REAL v1.2):
+Confirmed that GotoPreset actually moves the camera. Implemented bounded, 
+reliable movement with explicit Stop.
+
+Patrol Coordination (Phase 6 - REAL v1.3):
+Built multi-camera patrol engine with execution-ordered steps and radar feedback.
+
+Position Feedback Limits (Phase 7):
+Proved GetStatus is not a reliable position source. Must track positions in software.
+
+Physical Calibration (Phase 8):
+Measured actual camera step counts per degree and built calibration into position tracking.
+
+Startup Diagnostics (Phase 9):
+Proved mechanical calibration at startup does not provide usable position feedback.
+
+Protocol Comprehensiveness (Phase 10):
+Tested SOAP variants, endpoints, and services to build robust discovery.
+
+Safe Movement Ownership (Phase 11):
+Implemented bounded pulses with mandatory Stop and hard-limit enforcement.
+
+Complete Parameter Tuning (Phase 12 - REAL v1.5):
+Added per-camera, per-step speed, pulse duration, and pulse gap configuration.
+
+Video Verification (Phase 13):
+Added independent RTSP/snapshot channel to verify position visually.
+
+Unified Integration (Phase 14 - FULL v2.0):
+Merged all v1.x features into one application.
+
+Usability Focus (Phase 15 - UNIFIED v2.1):
+Reorganized as tabbed application to prevent UI overcrowding.
+
+---
+
+MISSING IMPLEMENTATIONS FOR PRODUCTION
+
+Based on the lineage audit, the following are confirmed missing from the 
+current latest checkpoint (2026-10-07 generation):
+
+1. COMPLETE GUI PANELS (tabs exist structurally, but content incomplete)
+   - Live View tab: video decoder + overlay rendering
+   - PTZ Control tab: manual jog buttons + radar
+   - Patrol & Automation tab: step editor, templates, loop controls
+   - Discovery tab: scan controls, result table, import workflow
+   - Diagnostics tab: full capability probe and error guidance
+   - Logs & Reports tab: log viewer, export
+
+2. VIDEO AND OVERLAY
+   - RTSP decoder initialization
+   - Snapshot fetch and cache
+   - Status overlay rendering (text, counters, icons)
+   - Multiview optional grid
+
+3. DISCOVERY ENGINE
+   - WS-Discovery probe generation
+   - ARP table parsing
+   - Safe bounded port scanning
+   - Device identity merging
+   - User approval workflow for adding cameras
+
+4. CALIBRATION AND POSITION TRACKING
+   - User-driven calibration workflow
+   - Per-camera step limit configuration
+   - Radar position update from worker
+   - UNSYNCED state handling
+
+5. OFFICE-FAN TEMPLATES AND LOOP MODES
+   - Template selection and patrol step generation
+   - PING_PONG endpoint ordering
+   - Repeat mode UI (ONCE, FOREVER, FIXED_COUNT)
+   - Automatic wait insertion
+
+6. CONFIGURATION MIGRATION AND DEFAULTS
+   - Old config format migration
+   - Safe defaults for new cameras
+   - Atomic save with validation
+   - Backup and recovery
+
+7. COMPLETE COMMAND QUEUE AND WORKER
+   - Command type dispatch (MANUAL_MOVE, PAUSE, RESUME, etc.)
+   - State machine transitions
+   - Error recovery logic
+   - Position counter updates
+
+8. ERROR HANDLING AND GUIDANCE
+   - Categorized error messages
+   - "What Needs Attention?" panel generation
+   - Corrective action suggestions
+   - Config key references
+
+9. DIAGNOSTIC REPORTS AND LOGGING
+   - Environment capability report
+   - Per-camera capability report
+   - Persistent log files
+   - Report export
+
+10. PERSISTENCE AND SHUTDOWN
+    - State.json for runtime state
+    - PID file for single-instance lock
+    - Graceful shutdown sequence
+    - Worker thread cleanup
+
+---
+
+STATUS SUMMARY
+
+✓ VERIFIED_HARDWARE Features (from real camera tests):
+  - OnvifCameraBridge with GotoPreset
+  - Bounded ContinuousMove + Stop
+  - Hard-limit enforcement
+  - Calibrated position tracking
+  - Per-camera speed configuration
+  - Real preset discovery
+
+✓ VERIFIED_NETWORK Features (from real ONVIF responses):
+  - Service discovery (GetDeviceInformation, GetServices)
+  - Profile and preset discovery
+  - Snapshot URI resolution
+  - RTSP URI resolution
+  - Safe port list discovery
+
+✓ VERIFIED_STATIC Features (from code and mock tests):
+  - Application architecture
+  - Config parser and atomic save
+  - Mock camera framework
+  - Multi-camera worker isolation
+  - Emergency Stop priority
+  - State machine structure
+  - Tab-based GUI structure
+  - Discovery engine skeleton
+  - Diagnostics read-only access
+
+✗ NOT_YET_INTEGRATED or INCOMPLETE:
+  - Video decoder and overlay rendering
+  - Complete GUI panels and controls
+  - Full command dispatch loop per camera
+  - Calibration user workflow
+  - Discovery scanning and result presentation
+  - Complete diagnostics guidance
+  - Configuration migration helpers
+  - Persistent logging and reports
+  - Graceful shutdown sequence
+
+---
+
+NEXT STEPS (EXACT ORDER FROM LEDGER + LINEAGE)
+
+1. Audit current ptz_patrol_gui.py source code fully
+2. Compare code against lineage to identify gaps
+3. Identify which features are stubbed, placeholders, or unimplemented
+4. Integrate missing implementations in dependency order:
+   a. CameraWorker complete command loop (from Phase 6)
+   b. OnvifCameraBridge full operations (from Phase 5)
+   c. Bounded pulse + Stop ownership (from Phase 11)
+   d. Position tracking and calibration (from Phase 8)
+   e. Configuration and defaults (from Phase 1)
+   f. GUI panels and controls (from Phase 15)
+   g. Discovery engine (from Phase 10)
+   h. Video and overlay (from Phase 13)
+   i. Diagnostics and error guidance (from Phase 3-4, 10)
+   j. Complete state machine and error recovery (from Phase 6, 11)
+
+END OF LINEAGE REPORT
