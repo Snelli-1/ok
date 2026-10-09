@@ -436,18 +436,121 @@ class CameraWorker(threading.Thread):
         self.mock_mode = mock_mode
         self.commands: "queue.Queue[Any]" = queue.Queue()
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
         self.state = CameraState.DISCONNECTED
         self.bridge = resolve_bridge(camera, mock_mode)
         self.capabilities = CameraCapabilities()
         self.last_status: Dict[str, Any] = {"pan": 0, "tilt": 0, "zoom": 0, "reliable": False}
         self.current_patrol: Optional[Patrol] = None
         self._success = True
+        self._patrol_running = False
 
     def start_worker(self) -> None:
         self.start()
 
     def push_command(self, cmd_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
         self.commands.put({"type": cmd_type, "payload": payload or {}})
+
+    def _maybe_wait_for_resume(self) -> None:
+        while self.pause_event.is_set():
+            if self.stop_event.is_set():
+                break
+            time.sleep(0.1)
+
+    def _run_patrol_cycle(self, patrol: Patrol) -> None:
+        if not patrol.steps:
+            self.state = CameraState.IDLE
+            return
+
+        repeat_limit = None if patrol.repeat_mode == RepeatMode.FOREVER.value else patrol.repeat_count
+        runs = 0
+
+        while not self.stop_event.is_set():
+            if repeat_limit is not None and runs >= repeat_limit:
+                self.state = CameraState.IDLE
+                return
+
+            for step in sorted(patrol.steps, key=lambda s: s.exec_num):
+                if self.stop_event.is_set():
+                    self.state = CameraState.IDLE
+                    return
+                if not step.enabled:
+                    continue
+
+                self._maybe_wait_for_resume()
+                self.state = CameraState.MOVING
+
+                action = str(step.action).upper()
+                target = str(step.target)
+
+                if action == StepAction.WAIT.value:
+                    self.state = CameraState.DWELLING
+                    time.sleep(max(0.0, float(step.dwell_s)))
+                    continue
+
+                if action == StepAction.GOTO_PRESET.value:
+                    if self.bridge is not None:
+                        self.bridge.move_to_preset(target)
+                    self.last_status = self.bridge.get_status() if self.bridge else self.last_status
+                    self.state = CameraState.SETTLING
+                    time.sleep(max(0.0, float(step.settle_s)))
+                    if step.dwell_s > 0:
+                        self.state = CameraState.DWELLING
+                        time.sleep(max(0.0, float(step.dwell_s)))
+                    continue
+
+                if action == StepAction.HOME.value or action == StepAction.GOTO_HOME.value:
+                    if self.bridge is not None:
+                        self.bridge.home()
+                    self.state = CameraState.SETTLING
+                    time.sleep(max(0.0, float(step.settle_s)))
+                    continue
+
+                if action == StepAction.STOP.value:
+                    if self.bridge is not None:
+                        self.bridge.stop()
+                    self.state = CameraState.STOPPING
+                    time.sleep(max(0.0, float(step.settle_s)))
+                    continue
+
+                if action == StepAction.CONTINUOUS_MOVE.value:
+                    if self.bridge is not None:
+                        pan_velocity = (float(step.pan_steps) / max(1.0, float(step.move_s))) if step.pan_steps else 0.0
+                        tilt_velocity = (float(step.tilt_steps) / max(1.0, float(step.move_s))) if step.tilt_steps else 0.0
+                        self.bridge.continuous_move(pan_velocity, tilt_velocity, float(step.zoom), timeout_s=max(0.1, float(step.move_s)))
+                        self.bridge.stop()
+                    self.state = CameraState.SETTLING
+                    time.sleep(max(0.0, float(step.settle_s)))
+                    continue
+
+                if action == StepAction.ABSOLUTE_MOVE.value:
+                    if self.bridge is not None:
+                        self.bridge.move_to_preset(target) if target else self.bridge.home()
+                    self.state = CameraState.SETTLING
+                    time.sleep(max(0.0, float(step.settle_s)))
+                    continue
+
+                if action == StepAction.RELATIVE_MOVE.value:
+                    if self.bridge is not None:
+                        self.bridge.continuous_move(float(step.pan_steps) / 10.0, float(step.tilt_steps) / 10.0, float(step.zoom) / 10.0, timeout_s=max(0.1, float(step.move_s)))
+                        self.bridge.stop()
+                    self.state = CameraState.SETTLING
+                    time.sleep(max(0.0, float(step.settle_s)))
+                    continue
+
+                self.state = CameraState.IDLE
+                time.sleep(0.1)
+
+            runs += 1
+            if repeat_limit is not None and runs >= repeat_limit:
+                break
+
+            if patrol.repeat_mode == RepeatMode.PING_PONG.value:
+                if len(patrol.steps) >= 2:
+                    patrol.steps = list(reversed(patrol.steps))
+            self.state = CameraState.IDLE
+
+        self.state = CameraState.IDLE
 
     def run(self) -> None:
         self.state = CameraState.CONNECTING
@@ -476,11 +579,11 @@ class CameraWorker(threading.Thread):
                 if cmd_type == CommandType.READ_STATUS.value:
                     self.last_status = self.bridge.get_status() if self.bridge else {"pan": 0, "tilt": 0, "zoom": 0, "reliable": False}
                     self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.MANUAL_MOVE.value:
                     direction = payload.get("direction", "")
-                    velocity = payload.get("velocity", 0.2)
+                    velocity = float(payload.get("velocity", 0.2))
                     if self.bridge is not None:
-                        self.bridge.continuous_move(0.0, 0.0, 0.0, timeout_s=0.2)
                         self.state = CameraState.MOVING
                         if direction == "LEFT":
                             self.bridge.continuous_move(-velocity, 0.0, 0.0, timeout_s=0.5)
@@ -492,34 +595,56 @@ class CameraWorker(threading.Thread):
                             self.bridge.continuous_move(0.0, velocity, 0.0, timeout_s=0.5)
                         self.bridge.stop()
                         self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.GOTO_PRESET.value:
                     preset = payload.get("preset_token") or payload.get("preset") or self.camera.home_preset
                     if self.bridge is not None:
                         self.bridge.move_to_preset(preset)
                     self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.HOME.value:
                     if self.bridge is not None:
                         self.bridge.home()
                     self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.EMERGENCY_STOP.value:
+                    self.pause_event.clear()
                     if self.bridge is not None:
                         self.bridge.stop()
                     self.state = CameraState.STOPPING
                     self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.START_PATROL.value:
+                    self.pause_event.clear()
+                    self._patrol_running = True
                     self.state = CameraState.MOVING
-                    self.current_patrol = Patrol(patrol_id=f"{self.camera.camera_id}_patrol", camera_id=self.camera.camera_id, repeat_mode=RepeatMode.FOREVER.value)
-                    steps = payload.get("steps", [])
-                    for step in steps:
-                        step_obj = PatrolStep(**step)
-                        self.current_patrol.steps.append(step_obj)
+                    patrol = Patrol(
+                        patrol_id=f"{self.camera.camera_id}_patrol",
+                        camera_id=self.camera.camera_id,
+                        repeat_mode=payload.get("repeat_mode", RepeatMode.FOREVER.value),
+                        repeat_count=int(payload.get("repeat_count", 1)),
+                        steps=[],
+                    )
+                    for step in payload.get("steps", []):
+                        patrol.steps.append(PatrolStep(**step))
+                    self.current_patrol = patrol
+                    self._run_patrol_cycle(patrol)
+                    self._patrol_running = False
                     self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.STOP_PATROL.value:
+                    self._patrol_running = False
+                    self.pause_event.clear()
                     self.state = CameraState.IDLE
+
                 elif cmd_type == CommandType.PAUSE_PATROL.value:
+                    self.pause_event.set()
                     self.state = CameraState.PAUSED
+
                 elif cmd_type == CommandType.RESUME_PATROL.value:
+                    self.pause_event.clear()
                     self.state = CameraState.IDLE
+
                 else:
                     self.state = CameraState.IDLE
             except Exception:
@@ -527,6 +652,7 @@ class CameraWorker(threading.Thread):
 
     def stop_worker(self) -> None:
         self.stop_event.set()
+        self.pause_event.clear()
         if self.bridge is not None:
             try:
                 self.bridge.stop()
@@ -544,6 +670,32 @@ class PatrolEngine:
         self.workers[camera.camera_id] = worker
         worker.start_worker()
         return worker
+
+    def start_patrol(self, camera_id: str, steps: List[Dict[str, Any]], repeat_mode: str = RepeatMode.FOREVER.value,
+                     repeat_count: int = 1) -> None:
+        worker = self.workers.get(camera_id)
+        if worker is None:
+            return
+        worker.push_command(CommandType.START_PATROL.value, {
+            "steps": steps,
+            "repeat_mode": repeat_mode,
+            "repeat_count": repeat_count,
+        })
+
+    def pause_patrol(self, camera_id: str) -> None:
+        worker = self.workers.get(camera_id)
+        if worker is not None:
+            worker.push_command(CommandType.PAUSE_PATROL.value, {})
+
+    def resume_patrol(self, camera_id: str) -> None:
+        worker = self.workers.get(camera_id)
+        if worker is not None:
+            worker.push_command(CommandType.RESUME_PATROL.value, {})
+
+    def stop_patrol(self, camera_id: str) -> None:
+        worker = self.workers.get(camera_id)
+        if worker is not None:
+            worker.push_command(CommandType.STOP_PATROL.value, {})
 
     def emergency_stop(self) -> None:
         for worker in self.workers.values():
@@ -569,6 +721,17 @@ def build_default_camera(camera_id: str = "cam01", host: str = "192.168.1.10") -
         adapter=AdapterMode.AUTO.value,
         mock_profile=MockProfile.FULL.value,
     )
+
+
+def build_mock_patrol_steps() -> List[Dict[str, Any]]:
+    return [
+        {"exec_num": 10, "action": StepAction.GOTO_PRESET.value, "target": "HOME", "move_s": 0.8, "settle_s": 0.5, "dwell_s": 2.0, "enabled": True},
+        {"exec_num": 20, "action": StepAction.WAIT.value, "target": "WAIT", "move_s": 0.5, "settle_s": 0.2, "dwell_s": 4.0, "enabled": True},
+        {"exec_num": 30, "action": StepAction.GOTO_PRESET.value, "target": "LEFT", "move_s": 0.8, "settle_s": 0.5, "dwell_s": 2.5, "enabled": True},
+        {"exec_num": 40, "action": StepAction.WAIT.value, "target": "WAIT", "move_s": 0.5, "settle_s": 0.2, "dwell_s": 3.0, "enabled": True},
+        {"exec_num": 50, "action": StepAction.GOTO_PRESET.value, "target": "RIGHT", "move_s": 0.8, "settle_s": 0.5, "dwell_s": 2.5, "enabled": True},
+        {"exec_num": 60, "action": StepAction.GOTO_HOME.value, "target": "HOME", "move_s": 0.8, "settle_s": 0.5, "dwell_s": 2.0, "enabled": True},
+    ]
 
 
 def write_example_config(path: str = "config.txt") -> None:
@@ -642,6 +805,8 @@ class PTZPatrolApp:
     def __init__(self):
         self.root = None if tk is None else tk.Tk()
         self.engine = PatrolEngine(mock_mode=True)
+        self.camera = build_default_camera("cam01", "mock.local")
+        self.worker = self.engine.add_camera(self.camera)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -676,21 +841,25 @@ class PTZPatrolApp:
     def start_patrol(self) -> None:
         if self.root is None:
             return
+        self.engine.start_patrol(self.camera.camera_id, build_mock_patrol_steps(), repeat_mode=RepeatMode.FOREVER.value, repeat_count=1)
         self.status_var.set("Status: patrol started")
 
     def pause_patrol(self) -> None:
         if self.root is None:
             return
+        self.engine.pause_patrol(self.camera.camera_id)
         self.status_var.set("Status: patrol paused")
 
     def resume_patrol(self) -> None:
         if self.root is None:
             return
+        self.engine.resume_patrol(self.camera.camera_id)
         self.status_var.set("Status: patrol resumed")
 
     def stop_patrol(self) -> None:
         if self.root is None:
             return
+        self.engine.stop_patrol(self.camera.camera_id)
         self.status_var.set("Status: patrol stopped")
 
     def emergency_stop(self) -> None:
@@ -705,8 +874,7 @@ class PTZPatrolApp:
 
 
 def run_cli_tests() -> Dict[str, Any]:
-    # Minimal headless validation intentionally aligned with project process.
-    results: Dict[str, Any] = {"py_compile": True, "config": True, "mock_test": True}
+    results: Dict[str, Any] = {"py_compile": True, "config": True, "mock_test": True, "patrol_loop": True}
     try:
         import py_compile
         py_compile.compile("ptz_patrol_gui.py", doraise=True)
@@ -727,6 +895,18 @@ def run_cli_tests() -> Dict[str, Any]:
         assert mock_bridge.get_status()["pan"] < 0
     except Exception:
         results["mock_test"] = False
+
+    try:
+        engine = PatrolEngine(mock_mode=True)
+        camera = build_default_camera("cam01", "mock.local")
+        worker = engine.add_camera(camera)
+        time.sleep(0.2)
+        engine.start_patrol(camera.camera_id, build_mock_patrol_steps(), repeat_mode=RepeatMode.ONCE.value, repeat_count=1)
+        time.sleep(0.8)
+        engine.stop_patrol(camera.camera_id)
+        worker.stop_worker()
+    except Exception:
+        results["patrol_loop"] = False
 
     return results
 
