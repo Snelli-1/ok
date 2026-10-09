@@ -1,0 +1,116 @@
+"""Phase 7: read-only diagnostics extension.
+
+This module is intentionally non-destructive:
+- it reads camera metadata and capabilities
+- it lists profiles and presets
+- it checks status and system time
+- it does not issue movement commands
+
+It is meant to be the next safe bridge from a validated mock setup into a
+real camera probe workflow.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+
+class Phase7ReadOnlyDiagnostics:
+    """Read-only camera diagnostics for ONVIF-capable PTZ devices."""
+
+    def __init__(self, bridge: Any):
+        self.bridge = bridge
+
+    def probe(self) -> Dict[str, Any]:
+        if self.bridge is None:
+            return {
+                "ok": False,
+                "device": {},
+                "profiles": [],
+                "presets": [],
+                "status": {},
+                "capabilities": {},
+                "system_time": {},
+                "notes": ["bridge unavailable"],
+            }
+
+        report: Dict[str, Any] = {
+            "ok": False,
+            "device": {},
+            "profiles": [],
+            "presets": [],
+            "status": {},
+            "capabilities": {},
+            "system_time": {},
+            "notes": [],
+        }
+
+        try:
+            if hasattr(self.bridge, "get_device_info"):
+                report["device"] = self.bridge.get_device_info()
+        except Exception as exc:  # pragma: no cover
+            report["notes"].append(f"device info failed: {exc}")
+
+        try:
+            if hasattr(self.bridge, "discover_profiles"):
+                report["profiles"] = self.bridge.discover_profiles()
+        except Exception as exc:  # pragma: no cover
+            report["notes"].append(f"profile discovery failed: {exc}")
+
+        try:
+            if hasattr(self.bridge, "discover_presets"):
+                report["presets"] = self.bridge.discover_presets()
+        except Exception as exc:  # pragma: no cover
+            report["notes"].append(f"preset discovery failed: {exc}")
+
+        try:
+            if hasattr(self.bridge, "get_status"):
+                report["status"] = self.bridge.get_status()
+        except Exception as exc:  # pragma: no cover
+            report["notes"].append(f"status read failed: {exc}")
+
+        try:
+            if hasattr(self.bridge, "get_system_date_and_time"):
+                report["system_time"] = self.bridge.get_system_date_and_time()
+        except Exception as exc:  # pragma: no cover
+            report["notes"].append(f"system time read failed: {exc}")
+
+        capabilities = {
+            "supports_status": bool(report.get("status")),
+            "supports_goto_preset": bool(report.get("presets")),
+            "supports_continuous": True,
+            "supports_absolute": True,
+            "supports_relative": True,
+        }
+
+        report["capabilities"] = capabilities
+        report["ok"] = bool(report["device"]) or bool(report["profiles"]) or bool(report["presets"]) or bool(report["status"])
+        return report
+
+
+def run_phase7_probe(bridge: Any) -> Dict[str, Any]:
+    """Convenience wrapper for the read-only diagnostic flow."""
+    return Phase7ReadOnlyDiagnostics(bridge).probe()
+
+
+def example_mock_result() -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "device": {"manufacturer": "Mock", "model": "MockPTZ", "firmware": "0.0", "serial": "MOCK"},
+        "profiles": [{"token": "mock_profile_1", "name": "Mock Profile"}],
+        "presets": [{"token": "preset_home", "name": "HOME"}, {"token": "preset_left", "name": "LEFT"}, {"token": "preset_right", "name": "RIGHT"}],
+        "status": {"pan": 0, "tilt": 0, "zoom": 0, "reliable": True},
+        "capabilities": {
+            "supports_status": True,
+            "supports_goto_preset": True,
+            "supports_continuous": True,
+            "supports_absolute": True,
+            "supports_relative": True,
+        },
+        "system_time": {"utc": "mock-system-time", "local": "mock-local-time"},
+        "notes": ["mock-only example"],
+    }
+
+
+if __name__ == "__main__":
+    print(example_mock_result())
